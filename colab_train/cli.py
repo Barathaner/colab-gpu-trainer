@@ -263,7 +263,9 @@ def _repo_reachable(job: dict, token: str | None) -> tuple[bool, str]:
         default = _default_branch(out)
         return False, (f"branch {branch!r} not found" + (f"; the default branch is {default!r}, "
                                                           f"set repo.branch: {default}" if default else ""))
-    sha = next((line.split()[0][:8] for line in out.splitlines() if not line.startswith("ref:")), "")
+    want = f"refs/heads/{branch}" if branch else "HEAD"
+    sha = next((line.split()[0][:8] for line in out.splitlines()
+                if not line.startswith("ref:") and line.split()[-1:] == [want]), "")
     return True, (f"{branch or 'HEAD'} {sha}" if sha else "reachable")
 
 
