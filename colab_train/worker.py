@@ -82,6 +82,8 @@ def reconcile(item: dict, probe: dict, now: str, cfg: dict) -> dict:
             out[k] = probe[k]
     if max_it is not None:
         out["max_iters"] = max_it
+    if it_now is not None:
+        out["iter"] = it_now
 
     if probe.get("log_error") or run_state in ("crashed", "failed", "killed"):
         why = probe.get("log_error") or f"W&B run {run_state}"

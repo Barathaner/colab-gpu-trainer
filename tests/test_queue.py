@@ -256,3 +256,11 @@ class TabProbeTests(unittest.TestCase):
         # No saved URL and no notebook name: unknown, never "gone" (that used to re-queue running jobs).
         self.assertEqual(worker.browser_tab(None, ""), (None, None))
         self.assertIsNone(worker.browser_runtime_gone({"tab_url": None}))
+
+
+class ReconcileIterTests(unittest.TestCase):
+    def test_probe_iteration_is_shown_as_iter(self):
+        it = {"job": "j", "run_name": "r", "status": "running", "started": "2026-01-01T00:00:00+00:00", "resumes": 0}
+        ch = worker.reconcile(it, {"run_state": "running", "iteration": 333, "max_iters": 2000},
+                              "2026-01-01T00:05:00+00:00", {"stall_min": 15, "max_resumes": 2})
+        self.assertEqual((ch["iter"], ch["status"]), (333, "running"))
