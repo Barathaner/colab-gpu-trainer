@@ -794,7 +794,7 @@ def _stop_browser(args) -> int:
     if gone:
         print(f"runtime of {name} disconnected and deleted")
     else:
-        print("clicked Disconnect and delete runtime, but no Connect button came back in 60 s: check the screenshot")
+        print("clicked Disconnect and delete runtime, but no Connect or Reconnect button came back in 60 s: check the screenshot")
     return 0
 
 

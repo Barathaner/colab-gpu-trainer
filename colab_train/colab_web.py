@@ -236,7 +236,8 @@ def wait_for_runner(page: Any, log: Callable[[str], None] = print, stuck_s: int 
 
 
 def disconnect_and_delete(page: Any) -> bool:
-    """Connection options > Disconnect and delete runtime. Returns True when the Connect button is back."""
+    """Connection options > Disconnect and delete runtime. Returns True when a Connect or Reconnect button is back
+    (after a finished run Colab offers Reconnect instead of Connect)."""
     _open_options(page)
     page.get_by_role("menuitem", name=DISCONNECT_NAMES).first.click()
     for names in (("Yes",), ("Disconnect and delete runtime", "Disconnect and delete"), ("Delete", "OK")):
@@ -244,7 +245,7 @@ def disconnect_and_delete(page: Any) -> bool:
             break
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
-        if page.get_by_role("button", name=re.compile(r"^(Connect|Verbinden)\b")).count():
+        if page.get_by_role("button", name=re.compile(r"^(Connect|Reconnect|Verbinden|Erneut verbinden)\b")).count():
             return True
         page.wait_for_timeout(2000)
     return False
