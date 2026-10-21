@@ -250,8 +250,11 @@ class InitAndDoctorTests(unittest.TestCase):
         os.chdir(self.tmp.name)
         self.env = mock.patch.dict(os.environ, {"COLAB_TRAIN_CONFIG_DIR": str(Path(self.tmp.name) / "cfg")})
         self.env.start()
+        self.no_net = mock.patch.object(cli, "_remote_default_branch", return_value=None)  # init asks no network
+        self.no_net.start()
 
     def tearDown(self):
+        self.no_net.stop()
         self.env.stop()
         os.chdir(self.cwd)
         self.tmp.cleanup()
@@ -328,6 +331,42 @@ class InitAndDoctorTests(unittest.TestCase):
         ok, detail = cli._repo_reachable(job, FAKE_TOKEN)
         self.assertFalse(ok)
         self.assertNotIn(FAKE_TOKEN, detail)
+        job["repo"]["url"] = f"file://{src}"
+        job["repo"]["branch"] = "master"
+        ok, detail = cli._repo_reachable(job, None)
+        self.assertFalse(ok)
+        self.assertIn("branch 'master' not found", detail)
+        self.assertIn("default branch is 'main'", detail)
+        self.assertEqual(cli._default_branch(cli._ls_remote(job, None, "HEAD")[1]), "main")
+
+    def test_status_without_wandb_reads_the_colab_tab(self):
+        from colab_train import worker
+        Path("jobs").mkdir()
+        Path("jobs/off.yaml").write_text("name: off-job\nrepo:\n  url: https://example.invalid/r.git\n"
+                                         "train:\n  command: python x.py\n  max_iters: 1000\nwandb:\n  mode: disabled\n")
+        with mock.patch.object(worker, "browser_tab", return_value=(None, None)):
+            rc, text = run_cli(["status", "jobs/off.yaml"])
+        self.assertEqual(rc, 0, text)
+        self.assertNotIn("Traceback", text)
+        self.assertIn("W&B is off for this job", text)
+        tab = ["[colab-train] progress: 300/1000 (30%)"]
+        with mock.patch.object(worker, "browser_tab", return_value=(False, tab)):
+            rc, text = run_cli(["status", "jobs/off.yaml"])
+            self.assertIn("state=running", text)
+            self.assertIn("300 / 1000", text)
+            rc, text = run_cli(["logs", "jobs/off.yaml", "--lines", "5"])
+            self.assertIn("progress: 300/1000", text)
+        rc, text = run_cli(["launch", "jobs/off.yaml"])
+        self.assertEqual(rc, 0, text)
+        self.assertIn("no W&B", text)
+        self.assertIn("Secrets: none needed", text)
+
+    def test_init_uses_the_remote_default_branch(self):
+        with mock.patch.object(cli, "_remote_default_branch", return_value="master"):
+            rc, text = run_cli(["init", "--yes", "--repo", "https://github.com/me/old-repo.git",
+                                "--train", "python train.py", "--wandb", "no"])
+        self.assertEqual(rc, 0, text)
+        self.assertEqual(spec.load(Path("jobs/old-repo.yaml"))["repo"]["branch"], "master")
 
 
 if __name__ == "__main__":

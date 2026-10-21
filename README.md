@@ -40,7 +40,7 @@ cd your-repo
 colab-train init                            # asks for the repo URL, install steps, train command, W&B; writes jobs/<name>.yaml
 colab-train doctor jobs/<name>.yaml         # local setup, job spec, secret names, repo URL (HEAD only)
 colab-train launch jobs/<name>.yaml         # renders the notebook, prints the Colab URL and the steps
-colab-train status <name>                   # run state from W&B (needs a W&B job)
+colab-train status <name>                   # run state from W&B, or from the Colab tab (--browser) when W&B is off
 ```
 
 `init` also accepts flags, so it can run without questions:

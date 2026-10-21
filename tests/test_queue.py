@@ -226,3 +226,33 @@ class CancelTest(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TabProbeTests(unittest.TestCase):
+    """Jobs with W&B off are followed through the runner's lines in their Colab tab."""
+
+    def test_progress_done_and_errors_from_tab_lines(self):
+        lines = ["[colab-train] GPU: Tesla T4", "[colab-train] progress: 200/1000 (20%)",
+                 "[colab-train] primary repo failed (CalledProcessError); using the fallback repo",
+                 "[colab-train] W&B resume lookup failed (ValueError); starting fresh.",
+                 "[colab-train] progress: 400/1000 (40%)"]
+        rep = worker.parse_tab_lines(lines)
+        self.assertEqual((rep["iteration"], rep["max_iters"], rep["run_state"]), (400, 1000, "running"))
+        self.assertNotIn("log_error", rep)
+        self.assertEqual(worker.parse_tab_lines(lines + ["[colab-train] Done. Checkpoints are kept."])["run_state"],
+                         "finished")
+        bad = worker.parse_tab_lines(lines + ["RuntimeError: runner exited with status 1; see above"])
+        self.assertIn("runner exited with status 1", bad["log_error"])
+        self.assertEqual(worker.parse_tab_lines([]), {})
+
+    def test_saved_tab_reads_launch_state_and_unknown_tab_is_not_gone(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / ".colab-train").mkdir()
+            (Path(d) / ".colab-train" / "state.json").write_text(json.dumps(
+                {"demo": {"notebook": "/x/.colab-train/notebooks/demo-demo-1.ipynb",
+                          "browser": {"url": "https://colab.research.google.com/drive/abc"}}}))
+            self.assertEqual(worker.saved_tab(d, "demo"), ("https://colab.research.google.com/drive/abc", "demo-demo-1"))
+            self.assertEqual(worker.saved_tab(d, "other"), (None, ""))
+        # No saved URL and no notebook name: unknown, never "gone" (that used to re-queue running jobs).
+        self.assertEqual(worker.browser_tab(None, ""), (None, None))
+        self.assertIsNone(worker.browser_runtime_gone({"tab_url": None}))

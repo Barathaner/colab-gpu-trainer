@@ -6,7 +6,8 @@ launch_child() are the only parts that touch W&B, the browser or a child process
 Rules (from the coordinator's brief):
 - RUNNING while the W&B run exists and its iteration advances; FINISHED at max_iters or W&B finished.
 - STALLED when the iteration has not moved for stall_min minutes (default 15).
-- FAILED on a crashed/killed W&B run, a runner error line, or no W&B run 45 min after launch.
+- FAILED on a crashed/killed W&B run, a runner error line, or no run 45 min after launch. Jobs with W&B off are
+  followed through the runner's progress and Done lines in their Colab tab.
 - DISCONNECTED when the Colab tab or runtime is gone. Resumed as a fresh launch of the same run name (the runner
   restores the newest W&B checkpoint), at most max_resumes times (default 2). Never a keep-alive.
 - A usage-limit or no-GPU stop blocks the queue for backoff_h hours (default 2). Captcha, sign-in and robot-check
@@ -28,8 +29,10 @@ from typing import Any, Callable
 from . import queue as q
 
 EVENTS_FILE_ENV = "COLAB_TRAIN_EVENTS"
-ERROR_LOG = re.compile(r"training exited with|Traceback \(most recent call last\)|\[colab-train\] .*\b(failed|error)\b",
-                       re.I)
+# Fatal lines only. "primary repo failed; using the fallback repo" and "W&B resume lookup failed; starting fresh"
+# are recoveries, not failures.
+ERROR_LOG = re.compile(r"training exited with|runner exited with status \d+|Traceback \(most recent call last\)|"
+                       r"\[colab-train\] (?!.*(?:fallback|starting fresh)).*\b(failed|error)\b", re.I)
 NO_GPU_OR_LIMIT = re.compile(r"usage limit|no GPU|GPU backend", re.I)
 HUMAN_STOP = re.compile(r"captcha|robot check|sign-in|not signed in", re.I)
 NO_RUN_TIMEOUT_MIN = 45
@@ -89,8 +92,9 @@ def reconcile(item: dict, probe: dict, now: str, cfg: dict) -> dict:
                 "event": f"{item['job']}: FINISHED at iteration {it_now}"}
     if run_state is None:
         if _ago_min(item.get("started"), now) > NO_RUN_TIMEOUT_MIN:
-            return {**out, "status": "failed", "reason": f"no W&B run {NO_RUN_TIMEOUT_MIN} min after launch",
-                    "event": f"{item['job']}: FAILED (no W&B run after {NO_RUN_TIMEOUT_MIN} min)"}
+            return {**out, "status": "failed",
+                    "reason": f"no W&B run or runner output {NO_RUN_TIMEOUT_MIN} min after launch",
+                    "event": f"{item['job']}: FAILED (no W&B run or runner output after {NO_RUN_TIMEOUT_MIN} min)"}
         return {**out, "status": "running"}
 
     if probe.get("runtime_gone") is True:
@@ -175,17 +179,50 @@ def now_iso() -> str:
 
 # ---------------------------------------------------------------- real probes (network, browser)
 
+PROGRESS_LINE = re.compile(r"^\[colab-train\] progress: (\d+)/(\d+)")
+DONE_LINE = re.compile(r"^\[colab-train\] Done\.")
+
+
+def parse_tab_lines(lines: list[str]) -> dict:
+    """Progress from the runner's own lines in the Colab tab. Used when the job has no W&B run to read."""
+    out: dict[str, Any] = {}
+    for ln in lines:
+        m = PROGRESS_LINE.match(ln)
+        if m:
+            out["iteration"], out["max_iters"] = int(m.group(1)), int(m.group(2))
+    if any(DONE_LINE.match(ln) for ln in lines):
+        out["run_state"] = "finished"
+    elif lines:
+        out["run_state"] = "running"
+    err = next((ERROR_LOG.search(ln) for ln in lines if ERROR_LOG.search(ln)), None)
+    if err:
+        out["log_error"] = err.group(0)
+    return out
+
+
+def saved_tab(workdir: str | Path | None, job_name: str) -> tuple[str | None, str]:
+    """(tab URL, notebook stem) that `launch --browser` saved in <workdir>/.colab-train/state.json."""
+    path = Path(workdir or Path.cwd()) / ".colab-train" / "state.json"
+    try:
+        entry = json.loads(path.read_text()).get(job_name) or {}
+    except (OSError, ValueError, AttributeError):
+        return None, ""
+    return (entry.get("browser") or {}).get("url"), Path(entry.get("notebook") or "").stem
+
+
 def probe(item: dict, job_ref: str, run_name: str | None, workdir: str | None) -> dict:
     """What W&B and the browser show for one running item. Missing pieces are None, never a guess."""
     out: dict[str, Any] = {}
     cwd = Path(workdir) if workdir else Path.cwd()
+    job_name, wandb_on = None, True
     try:
         from . import spec, wandb_status
         old = Path.cwd()
         os.chdir(cwd)
         try:
             job = spec.load(spec.resolve_job_arg(job_ref), run_name=run_name)
-            run = wandb_status.find_run(job)
+            job_name, wandb_on = job["name"], job["wandb"]["mode"] != "disabled"
+            run = wandb_status.find_run(job) if wandb_on else None
             if run is not None:
                 s = wandb_status.summarize(job, run)
                 out.update({"run_state": s.get("state"), "iteration": s.get("iteration"),
@@ -203,21 +240,35 @@ def probe(item: dict, job_ref: str, run_name: str | None, workdir: str | None) -
             os.chdir(old)
     except Exception as e:  # noqa: BLE001 - a probe failure is "unknown", not a verdict
         out["probe_error"] = f"{type(e).__name__}"
-    out["runtime_gone"] = browser_runtime_gone(item)
+    url, stem = saved_tab(cwd, job_name) if job_name else (None, "")
+    gone, lines = browser_tab(item.get("tab_url") or url, stem)
+    out["runtime_gone"] = gone
+    if not wandb_on and lines is not None:
+        out.update(parse_tab_lines(lines))
     return out
 
 
-def browser_runtime_gone(item: dict) -> bool | None:
-    """True when the job's Colab tab is missing or shows a Reconnect button; None when the browser is not reachable."""
+def browser_tab(url: str | None, stem: str) -> tuple[bool | None, list[str] | None]:
+    """(runtime gone, runner lines) for the job's Colab tab. Gone = tab missing or a Reconnect button.
+    (None, None) when the browser is not reachable or the tab is unknown: unknown, do not act on it."""
+    if not url and not stem:
+        return None, None
     try:
         from . import browser, colab_web
         with browser.cdp_context() as ctx:
-            page = colab_web.find_job_page(ctx, item.get("tab_url"), "")
+            page = colab_web.find_job_page(ctx, url, stem)
             if page is None:
-                return True
-            return page.get_by_role("button", name=re.compile(r"^Reconnect\b")).count() > 0
+                return True, None
+            gone = page.get_by_role("button", name=re.compile(r"^Reconnect\b")).count() > 0
+            text = colab_web.page_text(page).splitlines()
+            return gone, [ln.rstrip() for ln in text if ln.startswith("[colab-train]") or ERROR_LOG.search(ln)]
     except Exception:  # noqa: BLE001 - no browser: unknown, do not act on it
-        return None
+        return None, None
+
+
+def browser_runtime_gone(item: dict) -> bool | None:
+    """True when the job's Colab tab is missing or shows a Reconnect button; None when unknown."""
+    return browser_tab(item.get("tab_url"), "")[0]
 
 
 def launch_child(item: dict, cfg_env: dict) -> tuple[int, str]:

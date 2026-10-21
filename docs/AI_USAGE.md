@@ -61,6 +61,8 @@ Run from the repo that holds the job (or with the job path). `JOB` is a preset n
 
 `status` returns exit 0 also when no run exists yet: it prints `no W&B run ending in '<run id>' ... yet`. That means the
 human has not pressed Run all, or the notebook has not reached training.
+For a job with `wandb.mode: disabled`, `status`, `logs` and the worker read the runner's `[colab-train] progress: N/M`
+and `Done.` lines from the job's Colab tab instead (browser mode only); without the browser, `status` says so.
 
 ## Standard flow
 

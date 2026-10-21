@@ -26,7 +26,7 @@ colab-train init --yes --repo URL --train CMD   # new job for a repo (asks in a 
 colab-train doctor [JOB]            # local setup, job spec, secret NAMES, repo URL (HEAD only); exit 1 on FAIL
 colab-train validate <job>          # JOB: preset (example-pytorch, cleanrl-ppo-cartpole, sb3-ppo, mjlab-rsl-rl), jobs/<name>.yaml or a path
 colab-train launch <job>            # writes .colab-train/notebooks/*.ipynb, prints Colab URL + steps
-colab-train status <job>            # W&B state, iteration, s/iter, ETA, checkpoints, videos
+colab-train status <job>            # W&B state, iteration, s/iter, ETA, checkpoints, videos (W&B off: progress from the --browser tab)
 colab-train logs <job> --lines 60
 colab-train resume <job>            # running? finished? or the notebook to Run all again
 colab-train stop <job>              # prints the manual browser step

@@ -136,7 +136,8 @@ def _init_scaffold(args) -> int:
         name = _ask("Job name (lowercase, dashes)", name)
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,48}", name):
         raise SpecError([f"name {name!r}: lowercase letters, digits, dashes (2-49 chars); pass --name"])
-    branch = args.branch or (_ask("Branch", "main") if interactive else "main")
+    remote_default = None if args.branch else _remote_default_branch(url)
+    branch = args.branch or (_ask("Branch", remote_default or "main") if interactive else remote_default or "main")
     if args.install is not None:
         install = [c for c in args.install if c.strip()]
     else:
@@ -221,22 +222,49 @@ def cmd_init(args) -> int:
 
 # ---------------------------------------------------------------- doctor
 
-def _repo_reachable(job: dict, token: str | None) -> tuple[bool, str]:
-    """`git ls-remote <url> HEAD`: one read, no clone. The token goes through an env var, never argv or output."""
+def _ls_remote(job: dict, token: str | None, *refs: str) -> tuple[int, str, str]:
+    """`git ls-remote --symref <url> REFS`: one read, no clone. The token goes through an env var, never argv."""
     url = job["repo"]["url"]
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     if token:
         env["COLAB_TRAIN_GIT_TOKEN"] = token
-    cmd = [*runner.git_prefix(job, "primary", host=urlparse(url).hostname), "ls-remote", url, "HEAD"]
+    cmd = [*runner.git_prefix(job, "primary", host=urlparse(url).hostname), "ls-remote", "--symref", url, *refs]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return False, f"could not run git ({type(e).__name__})"
-    if r.returncode == 0:
-        sha = (r.stdout.split() or [""])[0][:8]
-        return True, f"HEAD {sha}" if sha else "reachable"
-    err = secrets.scrub(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "git failed", [token])
-    return False, err[:200]
+        return 1, "", f"could not run git ({type(e).__name__})"
+    return r.returncode, r.stdout, r.stderr
+
+
+def _default_branch(stdout: str) -> str | None:
+    """The branch HEAD points to, from `ls-remote --symref` output ("ref: refs/heads/master\tHEAD")."""
+    m = re.search(r"^ref: refs/heads/(\S+)\s+HEAD$", stdout, re.M)
+    return m.group(1) if m else None
+
+
+def _remote_default_branch(url: str) -> str | None:
+    """Default branch of a repo reachable without a token (public), or None."""
+    job = {"repo": {"url": url, "token_user": "x-access-token"}}
+    try:
+        rc, out, _err = _ls_remote(job, None, "HEAD")
+    except Exception:  # noqa: BLE001 - only a default for a question
+        return None
+    return _default_branch(out) if rc == 0 else None
+
+
+def _repo_reachable(job: dict, token: str | None) -> tuple[bool, str]:
+    """The repo answers and job.repo.branch exists on it."""
+    branch = job["repo"].get("branch")
+    rc, out, err = _ls_remote(job, token, "HEAD", *([f"refs/heads/{branch}"] if branch else []))
+    if rc != 0:
+        msg = err.strip().splitlines()[-1] if err.strip() else "git failed"
+        return False, secrets.scrub(msg, [token])[:200]
+    if branch and not re.search(rf"\srefs/heads/{re.escape(branch)}$", out, re.M):
+        default = _default_branch(out)
+        return False, (f"branch {branch!r} not found" + (f"; the default branch is {default!r}, "
+                                                          f"set repo.branch: {default}" if default else ""))
+    sha = next((line.split()[0][:8] for line in out.splitlines() if not line.startswith("ref:")), "")
+    return True, (f"{branch or 'HEAD'} {sha}" if sha else "reachable")
 
 
 def cmd_doctor(args) -> int:
@@ -383,9 +411,10 @@ def _steps(job: dict, nb_path: Path, colab_url: str | None) -> list[str]:
                      f"then pick {nb_path.resolve()}")
     lines += [
         ("  2. Runtime > Change runtime type: " + _accel_label(job) + " (set in the notebook; check it)"),
-        f"  3. Secrets (key icon, Notebook access ON): {names}",
+        f"  3. Secrets (key icon, Notebook access ON): {names}" if names else "  3. Secrets: none needed",
         "  4. Runtime > Run all. Keep the tab open; reconnect and Run all again if it drops.",
-        f"  5. Follow it here: colab-train status {job['name']}   (or logs / resume)",
+        f"  5. Follow it here: colab-train status {job['name']}   (or logs / resume)" if job["wandb"]["mode"] != "disabled"
+        else "  5. Follow it in the Colab tab (W&B is off; `colab-train status` reads the tab only in --browser mode)",
     ]
     return lines
 
@@ -412,7 +441,8 @@ def cmd_launch(args) -> int:
         "launched": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
     }
     _save_state(state)
-    print(f"job {job['name']}  run {d['run_id']}  W&B {d['wandb_entity']}/{d['wandb_project']}")
+    wb = f"W&B {d['wandb_entity']}/{d['wandb_project']}" if job["wandb"]["mode"] != "disabled" else "no W&B"
+    print(f"job {job['name']}  run {d['run_id']}  {wb}")
     print(f"notebook: {nb.resolve()}")
     if pub["colab_url"]:
         print(f"one-click URL: {pub['colab_url']}")
@@ -443,8 +473,48 @@ def _status_text(s: dict) -> str:
     return "\n".join(lines)
 
 
+NO_WANDB_TAB_HINT = ("W&B is off for this job, so progress comes from its Colab tab. Start it with "
+                     "`colab-train launch JOB --browser` (the dedicated browser must be running), or watch the tab: "
+                     "the runner prints '[colab-train] progress: N/M' and '[colab-train] Done.'")
+
+
+def _tab_report(job: dict) -> tuple[dict | None, list[str]]:
+    """Progress parsed from the job's Colab tab, for jobs with W&B off. (None, []) when the tab is not reachable."""
+    from . import worker
+    url, stem = worker.saved_tab(Path.cwd(), job["name"])
+    gone, lines = worker.browser_tab(url, stem)
+    if lines is None:
+        return None, []
+    rep = worker.parse_tab_lines(lines)
+    rep["runtime_gone"] = gone
+    return rep, lines
+
+
+def _status_no_wandb(job: dict, as_json: bool) -> int:
+    rep, _lines = _tab_report(job)
+    if rep is None:
+        print(json.dumps({"run": None, "message": NO_WANDB_TAB_HINT}) if as_json else NO_WANDB_TAB_HINT)
+        return 0
+    s = {"run": job["derived"]["run_id"], "source": "colab tab", "state": rep.get("run_state") or "not started",
+         "iteration": rep.get("iteration"), "max_iters": rep.get("max_iters") or job["train"]["max_iters"],
+         "error": rep.get("log_error"), "runtime_gone": rep.get("runtime_gone")}
+    if as_json:
+        print(json.dumps(s, indent=2))
+        return 0
+    it = s["iteration"]
+    print(f"run     {s['run']}  state={s['state']}  (from the Colab tab; W&B is off)")
+    print(f"iter    {it if it is not None else '-'} / {s['max_iters']}")
+    if s["error"]:
+        print(f"error   {s['error']}")
+    if s["runtime_gone"]:
+        print("runtime gone: the tab shows Reconnect. Run all again to resume (or `colab-train resume JOB`).")
+    return 0
+
+
 def cmd_status(args) -> int:
     job = _load(args.job, args.run_name)
+    if job["wandb"]["mode"] == "disabled":
+        return _status_no_wandb(job, args.json)
     from . import wandb_status
     run = wandb_status.find_run(job)
     if run is None:
@@ -458,6 +528,10 @@ def cmd_status(args) -> int:
 
 def cmd_logs(args) -> int:
     job = _load(args.job, args.run_name)
+    if job["wandb"]["mode"] == "disabled":
+        rep, lines = _tab_report(job)
+        print("\n".join(lines[-args.lines:]) if rep is not None else NO_WANDB_TAB_HINT)
+        return 0
     from . import wandb_status
     run = wandb_status.find_run(job)
     if run is None:
@@ -469,12 +543,18 @@ def cmd_logs(args) -> int:
 
 def cmd_resume(args) -> int:
     job = _load(args.job, args.run_name)
-    from . import wandb_status
     st = _state().get(job["name"], {})
-    run = wandb_status.find_run(job)
-    state = run.state if run is not None else "not started"
+    if job["wandb"]["mode"] == "disabled":
+        rep, _lines = _tab_report(job)
+        state = (rep or {}).get("run_state") or "unknown (W&B is off)"
+        if state == "running" and rep and rep.get("runtime_gone"):
+            state = "disconnected"
+    else:
+        from . import wandb_status
+        run = wandb_status.find_run(job)
+        state = run.state if run is not None else "not started"
     if state == "running":
-        print(f"{job['derived']['run_id']} is still running on W&B. Do not start a second runtime; "
+        print(f"{job['derived']['run_id']} is still running. Do not start a second runtime; "
               f"check: colab-train status {job['name']}")
         return 0
     if state == "finished" and job["resume"]["source"] != "none":
