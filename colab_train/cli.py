@@ -990,7 +990,7 @@ def cmd_cancel(args) -> int:
     if prev == "missing":
         print(f"no queue item {args.id}", file=sys.stderr)
         return 1
-    if prev in ("running", "stalled"):
+    if prev in ("running", "stalled", "launching"):  # launching: a worker stopped mid-launch can leave a runtime
         if not args.yes:
             if not sys.stdin.isatty() or input(f"Stop the running Colab job {item['job']} ({args.id})? [y/N] ").strip().lower() \
                     not in ("y", "yes"):
