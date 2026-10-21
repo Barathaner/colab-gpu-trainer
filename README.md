@@ -220,6 +220,8 @@ arguments and copy new checkpoints to Drive every 60 seconds (Drive resume only)
 - **No multi-account or multi-runtime tricks**, no SSH or tunnels, no captcha solving.
 - Colab's Python version and preinstalled packages change over time. Pin your environment in `install`.
 
+Open problems and ideas: [docs/OPEN_PROBLEMS.md](docs/OPEN_PROBLEMS.md).
+
 ## Development
 
 ```bash

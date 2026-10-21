@@ -69,5 +69,9 @@ private repo; `--gpu none` for CPU). Then `colab-train doctor jobs/<name>.yaml`.
 without W&B. Never ask the human to paste a token into the chat: tell them `colab-train secrets set NAME` (hidden
 prompt) or Colab Secrets with Notebook access ON.
 
-Limits to tell the human plainly: one Colab session at a time, a daily GPU quota, about 10 h max runtime. The tool stops
-and asks a human on captcha or sign-in; there is no keep-alive.
+## Known limits
+
+Tell the human plainly: one Colab session at a time, a daily GPU quota, about 10 h max runtime. The tool stops and
+asks a human on captcha or sign-in; there is no keep-alive. A job without W&B shows progress only while its Colab tab
+is open. A fine-grained GitHub token reads only the repos listed in its Repository access. Open problems and ideas:
+`docs/OPEN_PROBLEMS.md`.

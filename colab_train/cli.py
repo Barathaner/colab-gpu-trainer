@@ -351,8 +351,10 @@ def cmd_doctor(args) -> int:
         if ok:
             row("ok", f"repo reachable: {job['repo']['url']}", detail)
         else:
-            fix = (f"the token in {job['repo']['token_secret']} may be wrong or lack read access to this repo: "
-                   f"colab-train secrets set {job['repo']['token_secret']}" if job["repo"].get("token_secret")
+            fix = (f"the token in {job['repo']['token_secret']} may be wrong, expired or lack read access to this "
+                   "repo (a fine-grained GitHub token reads only the repos listed under its Repository access; add "
+                   f"this one there); for a new token value: colab-train secrets set {job['repo']['token_secret']}"
+                   if job["repo"].get("token_secret")
                    else "check the URL in a browser; a private repo needs repo.token_secret")
             row("FAIL", f"repo not reachable: {job['repo']['url']}", detail, fix)
     print("doctor: " + ("problems found (see FAIL above)" if fails else "no blocking problems"))
