@@ -245,6 +245,18 @@ class TabProbeTests(unittest.TestCase):
         self.assertIn("runner exited with status 1", bad["log_error"])
         self.assertEqual(worker.parse_tab_lines([]), {})
 
+    def test_wandb_job_that_dies_before_its_wandb_run_fails_from_the_tab(self):
+        lines = ["Traceback (most recent call last):",
+                 "FileNotFoundError: /root/.cache/data.npz is missing",
+                 "RuntimeError: training exited with 1; checkpoints so far are kept"]
+        self.assertEqual(worker.early_exit_from_tab(lines), {"log_error": "training exited with 1"})
+        self.assertEqual(worker.early_exit_from_tab(["Traceback (most recent call last):"]), {})
+        verdict = worker.reconcile({"job": "j", "run_name": "r", "status": "running",
+                                   "started": "2026-10-22T00:00:00+00:00"},
+                                  {"run_state": None, "log_error": "training exited with 1"},
+                                  "2026-10-22T00:05:00+00:00", worker.settings({}))
+        self.assertEqual(verdict["status"], "failed")
+
     def test_saved_tab_reads_launch_state_and_unknown_tab_is_not_gone(self):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / ".colab-train").mkdir()

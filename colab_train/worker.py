@@ -36,6 +36,7 @@ ERROR_LOG = re.compile(r"training exited with|runner exited with status \d+|Trac
 NO_GPU_OR_LIMIT = re.compile(r"usage limit|no GPU|GPU backend", re.I)
 HUMAN_STOP = re.compile(r"captcha|robot check|sign-in|not signed in", re.I)
 NO_RUN_TIMEOUT_MIN = 45
+RUNNER_EXIT = re.compile(r"training exited with \d+|runner exited with status \d+")
 SESSION_RETRY_MIN = 10  # Colab's one-session limit: try again later, the queued job is not failed
 
 
@@ -202,6 +203,12 @@ def parse_tab_lines(lines: list[str]) -> dict:
     return out
 
 
+def early_exit_from_tab(lines: list[str]) -> dict:
+    """A W&B job that died before its W&B run started (install, data or env setup) shows that only in its tab."""
+    err = next((RUNNER_EXIT.search(ln) for ln in lines if RUNNER_EXIT.search(ln)), None)
+    return {"log_error": err.group(0)} if err else {}
+
+
 def saved_tab(workdir: str | Path | None, job_name: str) -> tuple[str | None, str]:
     """(tab URL, notebook stem) that `launch --browser` saved in <workdir>/.colab-train/state.json."""
     path = Path(workdir or Path.cwd()) / ".colab-train" / "state.json"
@@ -247,6 +254,8 @@ def probe(item: dict, job_ref: str, run_name: str | None, workdir: str | None) -
     out["runtime_gone"] = gone
     if not wandb_on and lines is not None:
         out.update(parse_tab_lines(lines))
+    elif lines is not None and out.get("run_state") is None:
+        out.update(early_exit_from_tab(lines))
     return out
 
 
