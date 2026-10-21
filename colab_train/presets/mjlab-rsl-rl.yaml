@@ -1,0 +1,60 @@
+# Example: an mjlab + rsl_rl training repo (uv project) on a free Colab T4.
+# Replace the repo URL, the task id and the commands with your own. Secrets are NAMES only.
+# `colab-train init <name> --preset mjlab-rsl-rl` writes an editable copy to jobs/<name>.yaml.
+name: mjlab-rsl-rl
+description: Example mjlab + rsl_rl repo (uv project, MuJoCo rendering, W&B). Replace repo, task and commands.
+repo:
+  url: https://github.com/your-org/your-robot-repo.git
+  branch: main
+  token_secret: GITHUB_TOKEN     # private repo: fine-grained token with read access to contents; null for a public repo
+  token_user: x-access-token
+  submodules: false
+  # Optional fallback host, used only when the clone or fetch from url fails. Uncomment and replace:
+  # fallback_url: https://git.example.invalid/your-org/your-robot-repo.git
+  # fallback_token_secret: GIT_TOKEN
+  # fallback_token_user: your-user
+python: "3.13"                   # uv installs this Python; null = Colab's Python
+install:
+  - uv sync --frozen             # needs uv.lock in the repo; use "pip install -r requirements.txt" for other setups
+mujoco_gl: true                  # probes EGL, then OSMesa, for video rendering
+wandb:
+  mode: online                   # online | offline | disabled (disabled also needs resume.source drive or none)
+  entity: your-wandb-entity      # placeholder: your W&B team or user name
+  project: mjlab-rsl-rl
+  api_key_secret: WANDB_API_KEY
+  iteration_key: _step
+run:
+  prefix: mjlab
+  name: colab-1
+train:
+  task: Mjlab-Your-Task-Id-v0    # placeholder: the task id registered in your repo (grep your src/ for it)
+  num_envs: 1024
+  max_iters: 3000
+  save_every: 100
+  command: "uv run --frozen train {task} --env.scene.num-envs {num_envs} --agent.max-iterations {iters} --agent.run-name {run_id} --agent.wandb-project {wandb_project} --agent.save-interval {save_every}{video_flags}{resume_args}"
+video:
+  every: 500                     # iterations between training videos; 0 turns them off
+  steps_per_iter: 24
+  length: 400
+  flags: " --video True --video-interval {video_interval} --video-length {video_length}"
+resume:
+  source: wandb                  # wandb: checkpoints are uploaded as W&B run files; drive: Google Drive; none
+  checkpoint_glob: "logs/**/model_*.pt"
+  checkpoint_regex: 'model_(\d+)\.pt'
+  restore_dir: "logs/rsl_rl/{experiment}/{run_name}"
+  experiment_config_key: log_dir # W&B config key holding rsl_rl's run directory; {experiment} = its parent folder
+  wandb_config_shim: true        # rsl_rl rewrites its W&B config on resume; allow that one change
+  sync_extra: ["logs/**/params/*.yaml", "logs/**/params/*.json"]
+  # rsl_rl restarts its loop at the loaded iteration and runs max-iterations more, so "remaining"
+  # passes max_iters - start. Use "total" when your train command counts its steps itself.
+  iters_mode: remaining
+  args: "--agent.resume True --agent.load-run {resume_run} --agent.load-checkpoint {resume_checkpoint}"
+bench:
+  command: null
+  # Optional evaluation after training, run on the newest checkpoint, e.g.:
+  # command: "uv run --frozen eval-your-task --checkpoint {checkpoint} --task {task} --trials 100 --json {bench_json} --device cuda:0 --log-to-wandb {wandb_entity}/{wandb_project}/{run_id}-bench"
+limits:
+  max_hours: 10                  # the Colab session budget; training gets SIGINT when it is used up
+runtime:
+  accelerator: GPU
+  gpu_type: T4

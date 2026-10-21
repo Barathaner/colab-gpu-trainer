@@ -1,0 +1,38 @@
+# Generic example: a Stable-Baselines3 PPO repo you own (train.py + requirements.txt), W&B optional.
+# The repo's train.py is the contract: it prints the SB3 logger table (it contains "| total_timesteps | <n> |"),
+# saves checkpoints/<run_name>/ckpt_<steps>.zip, and resumes from --resume <zip> with the step count kept.
+# Replace repo.url with yours. Without a repo of your own, start from cleanrl-ppo-cartpole instead.
+name: sb3-ppo
+description: Stable-Baselines3 PPO in your repo (requirements.txt + train.py). W&B optional, checkpoints on Drive.
+repo:
+  url: https://github.com/your-org/your-sb3-repo.git
+  branch: main
+  token_secret: null            # GITHUB_TOKEN for a private repo
+install:
+  - pip install -q -r requirements.txt
+wandb:
+  mode: disabled                # set mode: online, entity: <your W&B user>, and the WANDB_API_KEY secret to log curves
+  api_key_secret: WANDB_API_KEY
+  project: sb3-ppo
+run:
+  prefix: sb3
+  name: colab-1
+train:
+  num_envs: 1
+  max_iters: 1000000            # total timesteps
+  save_every: 100000
+  command: "python train.py --algo ppo --env CartPole-v1 --timesteps {iters} --run-name {run_id} --save-dir checkpoints/{run_name}{resume_args}"
+progress:
+  regex: 'total_timesteps\s*\|\s*(?P<iter>\d+)'
+resume:
+  source: drive
+  checkpoint_glob: "checkpoints/**/ckpt_*.zip"
+  checkpoint_regex: 'ckpt_(\d+)\.zip'
+  restore_dir: "checkpoints/{run_name}"
+  iters_mode: total
+  args: "--resume {resume_path}"
+limits:
+  max_hours: 4
+runtime:
+  accelerator: GPU
+  gpu_type: T4

@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+logs/
+bench/
+build/
+*.egg-info/
+.pytest_cache/
+
+# colab-train: local state, notebook renders and secrets (never commit these)
+.colab-train/
+jobs/*-local*.yaml
+*.local.yaml
+build/*.ipynb
+secrets.json
+.netrc
+.env

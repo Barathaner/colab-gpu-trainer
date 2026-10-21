@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "colab-train"
+version = "0.1.0"
+description = "Run training jobs (any repo, any framework) on a free Google Colab GPU from a YAML job spec"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6"]
+license = { text = "MIT" }
+
+[project.optional-dependencies]
+# `colab-train launch --browser` and `stop --browser` only. Everything else works without it.
+browser = ["playwright>=1.47"]
+# status, logs and the W&B resume only. Jobs with wandb.mode disabled (or no entity) do not need it.
+wandb = ["wandb>=0.19"]
+
+[project.scripts]
+colab-train = "colab_train.cli:main"
+
+[tool.setuptools]
+packages = ["colab_train"]
+
+[tool.setuptools.package-data]
+colab_train = ["presets/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

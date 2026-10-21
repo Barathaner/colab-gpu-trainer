@@ -1,0 +1,29 @@
+# Generic example: CleanRL PPO on CartPole, public GitHub repo, pip install, no W&B, progress from stdout.
+# CleanRL's ppo.py prints "global_step=<n>, episodic_return=<r>" during training; progress.regex reads n.
+# Its checkpoint is written only at the end (--save-model), so this job has no resume: a disconnect restarts it.
+# Check the branch name once: colab-train doctor jobs/cleanrl-ppo-cartpole.yaml
+name: cleanrl-ppo-cartpole
+description: CleanRL PPO on CartPole-v1 (CPU is enough). Public repo, pip install, no W&B, progress from stdout.
+repo:
+  url: https://github.com/vwxyzjn/cleanrl.git
+  branch: master
+install:
+  - pip install -q gymnasium tyro tensorboard
+wandb:
+  mode: disabled
+run:
+  prefix: cartpole
+  name: colab-1
+train:
+  num_envs: 8
+  max_iters: 500000             # total environment steps (CleanRL --total-timesteps)
+  save_every: 500000
+  command: "python cleanrl/ppo.py --env-id CartPole-v1 --total-timesteps {iters} --num-envs {num_envs} --seed 1"
+progress:
+  regex: 'global_step=(?P<iter>\d+)'
+resume:
+  source: none
+limits:
+  max_hours: 2
+runtime:
+  accelerator: none             # CartPole does not need a GPU

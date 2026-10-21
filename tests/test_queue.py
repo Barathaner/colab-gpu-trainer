@@ -1,0 +1,228 @@
+"""The shared Colab queue: locking under concurrent writers, state transitions with fake probes, launch decisions,
+notifications, cancel. No network, no browser, no real W&B: probes and launchers are passed in."""
+import json
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from colab_train import queue as q
+from colab_train import worker
+
+NOW = "2026-10-21T12:00:00+00:00"
+CFG = worker.settings({})  # max_parallel 1, stall 15 min, max_resumes 2, backoff 2 h
+
+
+def item(**kw):
+    base = {"id": "abc12345", "job": "/x/mjlab-rsl-rl.yaml", "name": "mjlab-rsl-rl", "run_name": "colab-1",
+            "priority": 0, "status": "running", "submitted": NOW, "notify_pane": "pane-7", "workdir": None,
+            "resumes": 0, "run_id": "mjlab-colab-1", "iter": None, "max_iters": 3000, "sec_it": None,
+            "eta_h": None, "wandb_url": None, "last_iter": None, "last_change": NOW, "started": NOW,
+            "reason": "", "tab_url": None}
+    base.update(kw)
+    return base
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.qpath = self.dir / "queue.json"
+        self.env = mock.patch.dict(os.environ, {"COLAB_TRAIN_QUEUE": str(self.qpath),
+                                                "COLAB_TRAIN_EVENTS": str(self.dir / "events.log")})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+
+class LockingTest(Base):
+    def test_concurrent_writers_lose_nothing(self):
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, "__ROOT__")
+            from colab_train import queue as q
+            for i in range(20):
+                q.add("/job" + sys.argv[1] + ".yaml", "r" + str(i), name="job" + sys.argv[1])
+        """).replace("__ROOT__", str(Path(__file__).resolve().parent.parent))
+        procs = [subprocess.Popen([sys.executable, "-c", script, str(n)], env={**os.environ},
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) for n in range(4)]
+        for p in procs:
+            _, err = p.communicate(timeout=120)
+            self.assertEqual(p.returncode, 0, err.decode()[-300:])
+        data = json.loads(self.qpath.read_text())
+        self.assertEqual(len(data["items"]), 80)
+        self.assertEqual(len({it["id"] for it in data["items"]}), 80)
+
+    def test_queue_file_is_private(self):
+        q.add("/a.yaml", None, name="a")
+        self.assertEqual(stat.S_IMODE(os.stat(self.qpath).st_mode), 0o600)
+
+    def test_queue_holds_no_secret_fields(self):
+        q.add("/a.yaml", None, name="a", notify_pane="p")
+        text = self.qpath.read_text().lower()
+        for word in ("token", "password", "api_key", "secret"):
+            self.assertNotIn(word, text)
+
+
+class ReconcileTest(Base):
+    def test_finished_at_max_iters(self):
+        ch = worker.reconcile(item(), {"run_state": "running", "iteration": 3000, "max_iters": 3000}, NOW, CFG)
+        self.assertEqual(ch["status"], "finished")
+
+    def test_wandb_crashed_is_failed(self):
+        ch = worker.reconcile(item(), {"run_state": "crashed", "iteration": 40}, NOW, CFG)
+        self.assertEqual(ch["status"], "failed")
+
+    def test_runner_error_line_is_failed(self):
+        ch = worker.reconcile(item(), {"run_state": "running", "iteration": 5,
+                                       "log_error": "training exited with 1"}, NOW, CFG)
+        self.assertEqual(ch["status"], "failed")
+        self.assertIn("training exited", ch["reason"])
+
+    def test_progress_keeps_running_and_moves_last_change(self):
+        later = "2026-10-21T12:05:00+00:00"
+        ch = worker.reconcile(item(last_iter=10), {"run_state": "running", "iteration": 12}, later, CFG)
+        self.assertEqual(ch["status"], "running")
+        self.assertEqual(ch["last_change"], later)
+
+    def test_no_new_iteration_for_15_min_is_stalled_then_recovers(self):
+        late = "2026-10-21T12:16:00+00:00"
+        ch = worker.reconcile(item(last_iter=12, last_change=NOW),
+                              {"run_state": "running", "iteration": 12}, late, CFG)
+        self.assertEqual(ch["status"], "stalled")
+        self.assertIn("STALLED", ch["event"])
+        back = worker.reconcile(item(status="stalled", last_iter=12, last_change=NOW),
+                                {"run_state": "running", "iteration": 13}, late, CFG)
+        self.assertEqual(back["status"], "running")
+
+    def test_no_wandb_run_for_45_min_is_failed_but_not_before(self):
+        self.assertEqual(worker.reconcile(item(), {"run_state": None}, "2026-10-21T12:30:00+00:00", CFG)["status"],
+                         "running")
+        self.assertEqual(worker.reconcile(item(), {"run_state": None}, "2026-10-21T13:00:00+00:00", CFG)["status"],
+                         "failed")
+
+    def test_disconnect_requeues_as_resume_up_to_the_limit(self):
+        ch = worker.reconcile(item(resumes=0), {"run_state": "running", "iteration": 9, "runtime_gone": True},
+                              NOW, CFG)
+        self.assertEqual(ch["status"], "queued")
+        self.assertEqual(ch["resumes"], 1)
+        ch = worker.reconcile(item(resumes=2), {"run_state": "running", "iteration": 9, "runtime_gone": True},
+                              NOW, CFG)
+        self.assertEqual(ch["status"], "failed")
+        self.assertIn("resume limit", ch["reason"])
+
+
+class DecideAndClassifyTest(Base):
+    def test_slot_limit_and_priority_order(self):
+        q.add("/a.yaml", None, priority=0, name="a")
+        q.add("/b.yaml", None, priority=5, name="b")
+        data = q.snapshot()
+        nxt = worker.decide_launch(data, CFG, NOW)
+        self.assertEqual(nxt["name"], "b")  # higher priority first
+        data["items"][0]["status"] = "running"  # a slot is taken
+        self.assertIsNone(worker.decide_launch(data, CFG, NOW))
+        cfg2 = worker.settings({"max_parallel": 2})
+        self.assertIsNotNone(worker.decide_launch(data, cfg2, NOW))
+
+    def test_blocked_queue_launches_nothing_until_backoff_passes(self):
+        q.add("/a.yaml", None, name="a")
+        data = q.snapshot()
+        data["blocked_until"] = "2026-10-21T14:00:00+00:00"
+        self.assertIsNone(worker.decide_launch(data, CFG, NOW))
+        self.assertIsNotNone(worker.decide_launch(data, CFG, "2026-10-21T14:01:00+00:00"))
+
+    def test_launch_outcomes(self):
+        self.assertEqual(worker.classify_launch(0, "")[0], "running")
+        self.assertEqual(worker.classify_launch(3, "STOP: usage limit reached. Nothing was clicked past it.")[0],
+                         "queued-blocked")
+        self.assertEqual(worker.classify_launch(3, "STOP: no GPU attached to this runtime (Colab did not assign")[0],
+                         "queued-blocked")
+        self.assertEqual(worker.classify_launch(3, "STOP: captcha. Nothing was clicked past it.")[0], "needs-human")
+        self.assertEqual(worker.classify_launch(3, "STOP: google sign-in page. Nothing")[0], "needs-human")
+        self.assertEqual(worker.classify_launch(1, "error: boom")[0], "failed")
+        self.assertEqual(worker.classify_launch(3, "STOP: too many sessions: Colab runs one session at a time on "
+                                                   "this account (Cancel clicked). Nothing was clicked past it.")[0],
+                         "queued-session")
+
+
+class RunOnceTest(Base):
+    def test_full_pass_launches_then_finishes_and_notifies(self):
+        hook = self.dir / "hook.py"
+        out = self.dir / "hook.out"
+        hook.write_text(f"import sys\nopen({str(out)!r}, 'a').write(sys.argv[1] + '|' + sys.argv[2] + '\\n')\n")
+        cfg = worker.settings({"notify_cmd": f"{sys.executable} {hook} {{pane}}"})
+        it = q.add(str(self.dir / "mjlab-rsl-rl.yaml"), "colab-1", notify_pane="pane-9", name="mjlab-rsl-rl")
+
+        def launcher(claimed):
+            return 0, ""
+
+        events = worker.run_once(cfg, probe_fn=lambda _it: {}, launcher=launcher, now=NOW)
+        self.assertTrue(any("LAUNCHED" in e for e in events))
+        rec = q.find(q.snapshot(), it["id"])
+        self.assertEqual(rec["status"], "running")
+
+        events = worker.run_once(cfg, probe_fn=lambda _it: {"run_state": "finished", "iteration": 3000,
+                                                       "max_iters": 3000}, launcher=launcher,
+                                 now="2026-10-21T13:00:00+00:00")
+        self.assertTrue(any("FINISHED" in e for e in events))
+        self.assertEqual(q.find(q.snapshot(), it["id"])["status"], "finished")
+        log = (self.dir / "events.log").read_text()
+        self.assertIn("LAUNCHED", log)
+        self.assertIn("FINISHED", log)
+        hook_lines = out.read_text().splitlines()
+        self.assertTrue(all(line.startswith("pane-9|") for line in hook_lines), hook_lines)
+
+    def test_usage_limit_blocks_the_queue_and_keeps_the_job_queued(self):
+        it = q.add("/a.yaml", None, name="a")
+        worker.run_once(CFG, probe_fn=lambda _it: {}, launcher=lambda _c: (3, "STOP: usage limit. Nothing"), now=NOW)
+        data = q.snapshot()
+        self.assertEqual(q.find(data, it["id"])["status"], "queued")
+        self.assertTrue(data["blocked_until"] > NOW)
+        self.assertIsNone(worker.decide_launch(data, CFG, NOW))
+
+    def test_disconnected_job_is_relaunched_once_more_in_the_queue(self):
+        it = q.add("/a.yaml", "colab-1", name="a")
+
+        def _set(data):
+            rec = q.find(data, it["id"])
+            rec["status"], rec["started"] = "running", NOW
+
+        q.update(_set)
+        worker.run_once(CFG, probe_fn=lambda _it: {"run_state": "running", "iteration": 4, "runtime_gone": True},
+                        launcher=None, now=NOW)
+        rec = q.find(q.snapshot(), it["id"])
+        self.assertEqual(rec["status"], "queued")
+        self.assertEqual(rec["resumes"], 1)
+
+
+class ErrorRoutingTest(Base):
+    def test_failures_go_to_the_error_pane_others_to_the_job_pane(self):
+        hook = self.dir / "hook.py"
+        out = self.dir / "hook.out"
+        hook.write_text(f"import sys\nopen({str(out)!r}, 'a').write(sys.argv[1] + '|' + sys.argv[2][:40] + '\\n')\n")
+        cfg = worker.settings({"notify_cmd": f"{sys.executable} {hook} {{pane}}", "error_pane": "pane-err"})
+        worker.notify(item(status="failed", notify_pane="pane-job"), "X: FAILED (boom)", cfg)
+        worker.notify(item(status="running", notify_pane="pane-job"), "X: running again", cfg)
+        lines = out.read_text().splitlines()
+        self.assertTrue(lines[0].startswith("pane-err|"), lines)
+        self.assertTrue(lines[1].startswith("pane-job|"), lines)
+
+
+class CancelTest(Base):
+    def test_cancel_queued_marks_it_and_missing_is_reported(self):
+        it = q.add("/a.yaml", None, name="a")
+        prev, _ = q.cancel(it["id"])
+        self.assertEqual(prev, "queued")
+        self.assertEqual(q.find(q.snapshot(), it["id"])["status"], "cancelled")
+        self.assertEqual(q.cancel("nope")[0], "missing")
+
+
+if __name__ == "__main__":
+    unittest.main()

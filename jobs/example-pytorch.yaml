@@ -1,0 +1,50 @@
+# Generic example: any PyTorch repo with its own train.py. Copy it, change repo, install and train.command.
+# Works with no W&B account: progress comes from progress.regex and checkpoints go to Google Drive.
+# Secrets are NAMES only. For a private repo: repo.token_secret: GITHUB_TOKEN, then
+#   colab-train secrets set GITHUB_TOKEN   (or add it in Colab Secrets with Notebook access ON)
+name: example-pytorch
+description: Generic PyTorch repo on GitHub (requirements.txt + train.py). Replace repo and train.command with yours.
+repo:
+  url: https://github.com/your-org/your-pytorch-repo.git
+  branch: main
+  token_secret: null          # null for a public repo; GITHUB_TOKEN for a private one (fine-grained, read contents)
+  token_user: x-access-token
+python: null                  # null = Colab's Python; or "3.12" to have uv install that version
+install:
+  - pip install -q -r requirements.txt
+mujoco_gl: false
+env:
+  PYTHONUNBUFFERED: "1"
+wandb:
+  mode: disabled              # auto/online needs wandb.entity and the WANDB_API_KEY secret
+  # mode: online
+  # entity: your-wandb-user
+  # project: example-pytorch
+  api_key_secret: WANDB_API_KEY
+run:
+  prefix: example
+  name: colab-1
+train:
+  task: ""
+  num_envs: 1
+  max_iters: 10000
+  save_every: 500
+  command: "python train.py --steps {iters} --save-every {save_every} --run-name {run_id} --ckpt-dir checkpoints/{run_name}{resume_args}"
+progress:
+  regex: 'step (?P<iter>\d+)/(?P<total>\d+)'   # the line train.py prints, e.g. "step 1500/10000 loss 0.42"
+video:
+  every: 0
+resume:
+  source: drive                 # checkpoints on Google Drive (consent asked once); wandb needs W&B online
+  checkpoint_glob: "checkpoints/**/ckpt_*.pt"
+  checkpoint_regex: 'ckpt_(\d+)\.pt'
+  restore_dir: "checkpoints/{run_name}"
+  iters_mode: total             # train.py counts steps itself: pass max_iters as the total
+  args: "--resume {resume_path}"
+bench:
+  command: null
+limits:
+  max_hours: 10
+runtime:
+  accelerator: GPU
+  gpu_type: T4                  # T4 | L4 | A100 | H100; accelerator none for CPU-only jobs
