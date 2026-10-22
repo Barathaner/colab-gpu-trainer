@@ -192,6 +192,8 @@ def build_env(job: dict) -> dict:
             "WANDB_PROJECT": d["wandb_project"], "WANDB_RUN_ID": d["run_id"],
             "WANDB_NAME": d["run_id"], "WANDB_RESUME": "allow",
         })
+    else:  # a trainer that calls wandb.init anyway (rsl_rl, mjlab) then runs without asking for a key
+        env["WANDB_MODE"] = "disabled"
     env.update({k: str(v) for k, v in job["env"].items()})
     return env
 

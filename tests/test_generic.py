@@ -47,6 +47,7 @@ class ExampleJobTests(unittest.TestCase):
         self.assertNotIn("wandb.ai", text)
         self.assertIn("accelerator", render.render_notebook(job)["metadata"])
         self.assertNotIn("gpuType", render.render_notebook(job)["metadata"]["colab"])
+        self.assertEqual(runner.build_env(job)["WANDB_MODE"], "disabled")  # trainers that call wandb.init anyway
 
     def test_sb3_progress_regex_reads_logger_table(self):
         job = spec.load_text(spec.preset_text("sb3-ppo"))
