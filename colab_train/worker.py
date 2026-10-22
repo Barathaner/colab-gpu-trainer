@@ -123,6 +123,8 @@ def reconcile(item: dict, probe: dict, now: str, cfg: dict) -> dict:
             out["status"] = "running"
             out["event"] = f"{item['job']}: running again at iteration {it_now}"
             return out
+    elif it_now is None and item.get("last_iter") is None:
+        pass  # still installing or loading (no iteration yet): the no-run timeout covers this phase, not the stall
     elif _ago_min(item.get("last_change") or item.get("started"), now) > st["stall_min"]:
         if item.get("status") != "stalled":
             out["status"] = "stalled"
