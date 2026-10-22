@@ -161,7 +161,10 @@ def run_all(page: Any, log: Callable[[str], None] = print, stuck_s: int | None =
 
 
 class SessionLimit(browser.SafetyStop):
-    """Colab refused a second runtime: this account runs one session at a time. Not a failure: re-queue."""
+    """Colab refused one more runtime: the account's session limit is reached. Not a failure: re-queue."""
+
+
+SESSION_LIMIT_REASON = "too many sessions: the account's Colab session limit is reached (free: 1, Pro: about 3)"
 
 
 SESSION_LIMIT = re.compile(r"too many (active )?sessions", re.I)
@@ -211,8 +214,7 @@ def wait_for_runner(page: Any, log: Callable[[str], None] = print, stuck_s: int 
         if session_limit(page):
             dismissed = dismiss_session_limit(page)
             shot = browser.screenshot(page, "too-many-sessions")
-            raise SessionLimit(f"too many sessions: Colab runs one session at a time on this account"
-                               f"{' (Cancel clicked)' if dismissed else ''}", shot)
+            raise SessionLimit(SESSION_LIMIT_REASON + (" (Cancel clicked)" if dismissed else ""), shot)
         if click_dialog_button(page, RUN_ANYWAY_NAMES):
             log("clicked 'Run anyway' (notebook not authored by Google)")
             continue

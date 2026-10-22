@@ -687,6 +687,20 @@ def _launch_browser(args) -> int:
         return 1
 
 
+def _drop_refused(name: str, ctx, page) -> None:
+    """Colab refused this job's runtime: the other sessions keep running. Bring their tabs back to the front and
+    close this new one. This job never got a runtime, so it must not count against max_parallel."""
+    state = _state()
+    if name in state:
+        state[name]["browser_running"] = False
+        _save_state(state)
+    _focus_running_tabs(ctx)
+    try:
+        page.close()
+    except Exception:  # noqa: BLE001 - closing is best effort
+        pass
+
+
 def _drive_launch(job: dict, nb: Path, ref: str | None = None) -> int:
     """Open, set up and run the job's notebook in Colab. ref: the job argument that finds this job again."""
     ref = ref or job["name"]
@@ -728,21 +742,17 @@ def _drive_launch(job: dict, nb: Path, ref: str | None = None) -> int:
                 lines = colab_web.run_all(page, log=print)
             browser.screenshot(page, "run-all")
         except colab_web.SessionLimit:
-            # The other session keeps running: bring its tab back to the front and close this new one.
-            # This job never got a runtime, so it must not count against max_parallel.
-            state = _state()
-            if name in state:
-                state[name]["browser_running"] = False
-                _save_state(state)
-            _focus_running_tabs(ctx)
-            try:
-                page.close()
-            except Exception:  # noqa: BLE001 - closing is best effort
-                pass
+            _drop_refused(name, ctx, page)
             raise
         except (browser.SafetyStop, secrets_panel.PanelError):
             raise
         except Exception as e:  # noqa: BLE001 - keep a screenshot of whatever went wrong, then report it
+            if colab_web.session_limit(page):  # the dialog can open at any step (Connect too), not only at Run all
+                dismissed = colab_web.dismiss_session_limit(page)
+                shot = browser.screenshot(page, "too-many-sessions")
+                _drop_refused(name, ctx, page)
+                raise colab_web.SessionLimit(colab_web.SESSION_LIMIT_REASON
+                                             + (" (Cancel clicked)" if dismissed else ""), shot) from e
             shot = browser.screenshot(page, "failure")
             raise browser.BrowserError(f"{type(e).__name__}: {e}" + (f" (screenshot: {shot})" if shot else "")) from e
         state = _state()
