@@ -41,7 +41,7 @@ EXAMPLE_TRAIN = "python train.py --steps {iters} --run-name {run_id}{resume_args
 DEFAULTS: dict[str, Any] = {
     "description": "",
     "repo": {"url": None, "branch": "main", "token_secret": None, "token_user": "x-access-token",
-             "dir": None, "submodules": False,
+             "dir": None, "submodules": False, "commit": None,
              "fallback_url": None, "fallback_branch": None, "fallback_token_secret": None,
              "fallback_token_user": "x-access-token"},
     "python": None,
@@ -150,6 +150,8 @@ def validate(raw: Any, run_name: str | None = None) -> tuple[dict, list[str]]:
                       "Store the value with `colab-train secrets set GITHUB_TOKEN`")
     if repo.get("token_user") and not re.fullmatch(r"[A-Za-z0-9._@-]+", str(repo["token_user"])):
         errors.append("repo.token_user: letters, digits, . _ @ - only (GitHub: x-access-token; other hosts: see their docs)")
+    if repo.get("commit") is not None and not re.fullmatch(r"[0-9a-f]{7,40}", str(repo["commit"])):
+        errors.append("repo.commit: a git commit hash (7 to 40 hex digits) to pin the job to, e.g. 6486b99")
     if repo.get("dir") is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", str(repo["dir"])):
         errors.append("repo.dir: a single directory name, e.g. my-repo")
     # Optional second host, used only when the primary clone or fetch fails. Same repo, other URL.

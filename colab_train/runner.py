@@ -102,22 +102,30 @@ def train_context(job: dict, repo: Path, resume: "Resume | None") -> dict:
 
 
 # rsl_rl (and similar loops) write their training config to W&B when training starts. On a resumed run it differs from the
-# first run (resume, load_run, max_iterations), and W&B refuses the change ("allow_val_change"). Resuming is
-# intended, so resume.wandb_config_shim lets that one update through. Loaded only for resumed runs, via PYTHONPATH.
+# first run (resume, load_run, max_iterations), and W&B refuses the change ("allow_val_change"). Resuming is intended,
+# so with resume.wandb_config_shim (COLAB_TRAIN_ALLOW_CONFIG_CHANGE=1) the shim lets that update through on a resumed
+# run. On every W&B run it adds the repo commit the job trains (colab_train_git_commit) to the config. Via PYTHONPATH.
 WANDB_RESUME_SHIM = """\
-\"\"\"colab-train: allow the config change a training loop makes on a resumed W&B run (see runner.py).\"\"\"
+\"\"\"colab-train: record the repo commit in the W&B config; allow the config change on a resumed run.\"\"\"
 try:
     import wandb.sdk.wandb_config as _wc
     _orig_update = _wc.Config.update
 
+    import os as _os
+    _commit = _os.environ.get("COLAB_TRAIN_GIT_COMMIT")
+    _allow = _os.environ.get("COLAB_TRAIN_ALLOW_CONFIG_CHANGE") == "1"
+
     def _update(self, d=None, allow_val_change=None):
-        return _orig_update(self, d, allow_val_change=True if allow_val_change is None else allow_val_change)
+        if _commit and isinstance(d, dict) and "colab_train_git_commit" not in d:
+            d = {**d, "colab_train_git_commit": _commit}
+        if _allow and allow_val_change is None:
+            allow_val_change = True
+        return _orig_update(self, d, allow_val_change=allow_val_change)
 
     _wc.Config.update = _update
 except Exception:
     pass
 """
-
 
 def write_resume_shim(workdir: Path) -> Path:
     d = workdir / "wandb-resume-shim"
@@ -170,9 +178,21 @@ def _sync_repo(job: dict, workdir: Path, source: str, url: str, branch: str) -> 
     else:
         workdir.mkdir(parents=True, exist_ok=True)
         _run([*g, "clone", "--branch", branch, url, str(repo)])
+    commit = job["repo"].get("commit")
+    if commit:  # pinned: later pushes to the branch do not change what the job trains
+        _run([*g, "-C", str(repo), "fetch", "origin", commit], check=False)  # a commit not on the branch head
+        _run(["git", "-C", str(repo), "checkout", "-q", "--detach", commit])
     if job["repo"]["submodules"]:
         _run([*g, "-C", str(repo), "submodule", "update", "--init", "--recursive"], check=False)
     return repo
+
+
+def head_commit(repo: Path) -> str:
+    try:
+        return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True,
+                              check=True).stdout.strip()
+    except (subprocess.CalledProcessError, OSError):
+        return ""
 
 
 def clone_or_update(job: dict, workdir: Path) -> Path:
@@ -518,6 +538,10 @@ def run_job(job: dict, workdir: Path, drive_root: Path | None) -> None:
 
     repo = clone_or_update(job, workdir)
     env = build_env(job)
+    sha = head_commit(repo)
+    if sha:
+        log(f"repo at commit {sha}" + (" (pinned)" if job["repo"].get("commit") else ""))
+        env["COLAB_TRAIN_GIT_COMMIT"] = sha
     if job["wandb"]["mode"] != "disabled":
         try:
             import wandb  # noqa: F401
@@ -568,9 +592,11 @@ def run_job(job: dict, workdir: Path, drive_root: Path | None) -> None:
     log(f"Run {job['derived']['run_id']} ({wb_text}); repo {repo}")
     if not resume_done:
         cmd = build_train_command(job, repo, resume)
-        if resume is not None and job["resume"].get("wandb_config_shim"):
+        if job["wandb"]["mode"] != "disabled":
             shim = write_resume_shim(workdir)
             env = {**env, "PYTHONPATH": str(shim) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")}
+            if resume is not None and job["resume"].get("wandb_config_shim"):
+                env["COLAB_TRAIN_ALLOW_CONFIG_CHANGE"] = "1"
         train(job, repo, cmd, env, drive_run)
     bench(job, repo, env, drive_run)
     log("Done. Checkpoints are kept (Drive or W&B) and the run is on W&B." if job["wandb"]["mode"] != "disabled"
