@@ -672,7 +672,7 @@ def _launch_browser(args) -> int:
         d = job["derived"]
         nb = render.write_notebook(job, _notebook_path(job, args.out)).resolve()
         print(f"job {job['name']}  run {d['run_id']}  notebook {nb}")
-        return _drive_launch(job, nb)
+        return _drive_launch(job, nb, args.job or job["name"])
     except colab_web.SafetyStop as e:
         print(f"STOP: {e.reason}. Nothing was clicked past it. A human has to look at the browser window.")
         if e.screenshot:
@@ -687,7 +687,9 @@ def _launch_browser(args) -> int:
         return 1
 
 
-def _drive_launch(job: dict, nb: Path) -> int:
+def _drive_launch(job: dict, nb: Path, ref: str | None = None) -> int:
+    """Open, set up and run the job's notebook in Colab. ref: the job argument that finds this job again."""
+    ref = ref or job["name"]
     name = job["name"]
     with browser.cdp_context() as ctx:
         home = colab_web.open_home(ctx)
@@ -751,7 +753,7 @@ def _drive_launch(job: dict, nb: Path) -> int:
         print("  " + line)
     if not any(ln.startswith("[colab-train] GPU:") for ln in lines):
         print("GPU line not seen yet; `colab-train status`/`logs` will show it once the run starts")
-    print(f"next: colab-train status {name}   (stop: colab-train stop {name} --browser)")
+    print(f"next: colab-train status {ref}   (stop: colab-train stop {ref} --browser)")
     return 0
 
 
