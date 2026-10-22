@@ -241,7 +241,11 @@ def disconnect_and_delete(page: Any) -> bool:
     """Connection options > Disconnect and delete runtime. Returns True when a Connect or Reconnect button is back
     (after a finished run Colab offers Reconnect instead of Connect)."""
     _open_options(page)
-    page.get_by_role("menuitem", name=DISCONNECT_NAMES).first.click()
+    item = page.get_by_role("menuitem", name=DISCONNECT_NAMES).first
+    if item.get_attribute("aria-disabled") == "true":  # no runtime attached: nothing to delete
+        page.keyboard.press("Escape")
+        return True
+    item.click()
     for names in (("Yes",), ("Disconnect and delete runtime", "Disconnect and delete"), ("Delete", "OK")):
         if click_dialog_button(page, names):
             break
