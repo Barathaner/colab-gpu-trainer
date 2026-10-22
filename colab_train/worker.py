@@ -149,8 +149,10 @@ def classify_launch(rc: int, output: str) -> tuple[str, str]:
             return "needs-human", reason
     if re.search(r"refused:", output):
         return "queued-blocked", "refused by the guard (a runtime is already running)"
-    last = next((ln for ln in reversed(output.splitlines()) if ln.strip()), "")
-    return "failed", last[:200]
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    # a multi-line error message ends with its screenshot path; its first line names the error
+    err = next((ln for ln in lines if re.match(r"(error|[A-Za-z]*Error)\b", ln)), None)
+    return "failed", (err or (lines[-1] if lines else ""))[:200]
 
 
 def notify(item: dict, message: str, cfg: dict, now: str | None = None) -> None:
@@ -340,6 +342,11 @@ def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
         claimed = q.update(_claim)
         if claimed:
             rc, output = launcher(claimed)
+            if rc != 0:
+                try:  # the whole launch output; the queue keeps only one line of it
+                    events_path().with_name(f"launch-{cur_id}.log").write_text(output)
+                except OSError:
+                    pass
 
             def _settle(data: dict) -> dict:
                 cur = q.find(data, cur_id)

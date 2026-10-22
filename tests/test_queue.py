@@ -147,6 +147,8 @@ class DecideAndClassifyTest(Base):
         self.assertEqual(worker.classify_launch(3, "STOP: captcha. Nothing was clicked past it.")[0], "needs-human")
         self.assertEqual(worker.classify_launch(3, "STOP: google sign-in page. Nothing")[0], "needs-human")
         self.assertEqual(worker.classify_launch(1, "error: boom")[0], "failed")
+        multi = "job x  run y\nerror: TimeoutError: Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting\n (screenshot: /s.png)"
+        self.assertEqual(worker.classify_launch(1, multi)[1], "error: TimeoutError: Locator.click: Timeout 30000ms exceeded.")
         self.assertEqual(worker.classify_launch(3, "STOP: too many sessions: Colab runs one session at a time on "
                                                    "this account (Cancel clicked). Nothing was clicked past it.")[0],
                          "queued-session")
