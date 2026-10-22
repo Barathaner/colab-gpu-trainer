@@ -804,6 +804,11 @@ def _stop_browser(args) -> int:
         browser.screenshot(page, "before-stop")
         gone = colab_web.disconnect_and_delete(page)
         browser.screenshot(page, "after-stop")
+        if gone:
+            try:  # a stopped job's tab still holds its whole output: hundreds of MB per tab in the browser
+                page.close()
+            except Exception:  # noqa: BLE001 - closing is best effort
+                pass
     entry["browser_running"] = False
     state[name] = entry
     _save_state(state)
