@@ -47,6 +47,8 @@ class ExampleJobTests(unittest.TestCase):
         self.assertNotIn("wandb.ai", text)
         self.assertIn("accelerator", render.render_notebook(job)["metadata"])
         self.assertNotIn("gpuType", render.render_notebook(job)["metadata"]["colab"])
+        cells = json.dumps(render.render_notebook(job)["cells"])
+        self.assertNotIn("nvidia-smi", cells.split("runner")[0])  # a CPU job's first cells must not fail on nvidia-smi
         self.assertEqual(runner.build_env(job)["WANDB_MODE"], "disabled")  # trainers that call wandb.init anyway
         with mock.patch.dict(os.environ, {"MPLBACKEND": "module://matplotlib_inline.backend_inline"}):
             self.assertEqual(runner.build_env(job)["MPLBACKEND"], "Agg")  # Colab's inline backend breaks a venv

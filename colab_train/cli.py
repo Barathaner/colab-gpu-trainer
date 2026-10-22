@@ -766,13 +766,13 @@ def _drive_launch(job: dict, nb: Path, ref: str | None = None) -> int:
                                        "launched": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")}}
             _save_state(state)
             try:
-                lines = colab_web.run_all(page, log=print)
+                lines = colab_web.run_all(page, log=print, need_gpu=job["runtime"].get("accelerator", "GPU") == "GPU")
             except colab_web.RunnerStuck as e:
                 # Fallback, once: the runner printed nothing. Keep a screenshot, disconnect, Run all again.
                 browser.screenshot(page, "runner-stuck")
                 print(f"runner stuck ({e}). Retrying once: disconnect and Run all again.")
                 colab_web.disconnect_and_delete(page)
-                lines = colab_web.run_all(page, log=print)
+                lines = colab_web.run_all(page, log=print, need_gpu=job["runtime"].get("accelerator", "GPU") == "GPU")
             browser.screenshot(page, "run-all")
         except colab_web.SessionLimit:
             _drop_refused(name, ctx, page)

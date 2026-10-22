@@ -150,14 +150,15 @@ def output_lines(page: Any) -> list[str]:
     return [ln.rstrip() for ln in page_text(page).splitlines() if ln.startswith("[colab-train]")]
 
 
-def run_all(page: Any, log: Callable[[str], None] = print, stuck_s: int | None = STUCK_S) -> list[str]:
+def run_all(page: Any, log: Callable[[str], None] = print, stuck_s: int | None = STUCK_S,
+            need_gpu: bool = True) -> list[str]:
     """Run all (toolbar button), then wait for the runner's first lines. Clicks only the approved dialogs."""
     btn = page.get_by_role("button", name=RUN_ALL_NAMES).first
     if btn.count():
         btn.click()
     else:
         page.keyboard.press("Control+F9")  # the Run all shortcut, when the toolbar button is not there
-    return wait_for_runner(page, log, stuck_s=stuck_s)
+    return wait_for_runner(page, log, stuck_s=stuck_s, need_gpu=need_gpu)
 
 
 class SessionLimit(browser.SafetyStop):
@@ -207,7 +208,8 @@ def secret_missing(page: Any) -> str | None:
     return (m.group(1) or m.group(2)) if m else None
 
 
-def wait_for_runner(page: Any, log: Callable[[str], None] = print, stuck_s: int | None = None) -> list[str]:
+def wait_for_runner(page: Any, log: Callable[[str], None] = print, stuck_s: int | None = None,
+                    need_gpu: bool = True) -> list[str]:
     """Wait after Run all for the runner's first [colab-train] lines. Used on its own to resume a run already started."""
     started = time.monotonic()
     deadline = started + START_TIMEOUT_S
@@ -228,7 +230,7 @@ def wait_for_runner(page: Any, log: Callable[[str], None] = print, stuck_s: int 
         lines = output_lines(page)
         if lines:
             return lines
-        if no_gpu(page):
+        if need_gpu and no_gpu(page):  # a CPU job (accelerator: none) has no nvidia-smi on purpose
             shot = browser.screenshot(page, "no-gpu")
             raise SafetyStop("no GPU attached to this runtime (Colab did not assign the job's GPU type). Disconnect "
                              "and delete the runtime, then try again later", shot)

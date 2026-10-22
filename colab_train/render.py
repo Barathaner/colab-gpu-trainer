@@ -87,11 +87,15 @@ def render_notebook(job: dict, runner_source: str | None = None) -> dict:
         "**Run all** again; the run resumes from its newest checkpoint.\n\n"
         "One-time: Colab Secrets (key icon) with **Notebook access** ON for: "
         + ", ".join(f"`{s}`" for _, s in pairs) + ". Drive consent is asked only if the job uses Drive.",
-        "# Check the GPU and Python (no secrets here).\n"
-        "import subprocess, sys\n"
-        "print(subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total,driver_version', "
-        "'--format=csv'], capture_output=True, text=True).stdout)\n"
-        "print('Python', sys.version.split()[0])\n",
+        ("# Check the GPU and Python (no secrets here).\n"
+         "import subprocess, sys\n"
+         "print(subprocess.run(['nvidia-smi', '--query-gpu=name,memory.total,driver_version', "
+         "'--format=csv'], capture_output=True, text=True).stdout)\n"
+         "print('Python', sys.version.split()[0])\n"
+         if job["runtime"].get("accelerator", "GPU") == "GPU" else
+         "# CPU runtime (runtime.accelerator: none): no GPU check.\n"
+         "import sys\n"
+         "print('Python', sys.version.split()[0])\n"),
         "# Colab Secrets are read here. Values go into environment variables and are never printed.\n"
         "import os\n"
         "from google.colab import userdata\n\n"
