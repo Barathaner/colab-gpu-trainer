@@ -249,6 +249,16 @@ class TabProbeTests(unittest.TestCase):
         self.assertIn("runner exited with status 1", bad["log_error"])
         self.assertEqual(worker.parse_tab_lines([]), {})
 
+    def test_run_that_continues_another_runs_iterations_is_not_finished_early(self):
+        st = worker.settings({})
+        item = {"job": "j", "run_name": "r", "status": "running", "started": "2026-10-22T00:00:00+00:00"}
+        first = worker.reconcile(item, {"run_state": "running", "iteration": 8998, "max_iters": 2500},
+                                 "2026-10-22T00:05:00+00:00", st)
+        self.assertEqual((first["status"], first["first_iter"]), ("running", 8998))
+        later = worker.reconcile({**item, "first_iter": 8998}, {"run_state": "running", "iteration": 11498,
+                                                                "max_iters": 2500}, "2026-10-22T01:00:00+00:00", st)
+        self.assertEqual(later["status"], "finished")
+
     def test_wandb_job_that_dies_before_its_wandb_run_fails_from_the_tab(self):
         lines = ["Traceback (most recent call last):",
                  "FileNotFoundError: /root/.cache/data.npz is missing",

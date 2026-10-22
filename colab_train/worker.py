@@ -85,6 +85,12 @@ def reconcile(item: dict, probe: dict, now: str, cfg: dict) -> dict:
         out["max_iters"] = max_it
     if it_now is not None:
         out["iter"] = it_now
+        first = item.get("first_iter")
+        if first is None:
+            first = out["first_iter"] = it_now
+        if max_it is not None and first > max_it:
+            # a run that continues another run's iteration count (8997 -> +2500): max_iters counts from its start
+            it_now = it_now - first
 
     if probe.get("log_error") or run_state in ("crashed", "failed", "killed"):
         why = probe.get("log_error") or f"W&B run {run_state}"
