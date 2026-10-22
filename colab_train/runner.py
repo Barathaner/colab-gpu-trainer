@@ -228,8 +228,18 @@ def _can_render(repo: Path, backend: str, env: dict) -> bool:
     return r.returncode == 0
 
 
-def pick_gl_backend(repo: Path, env: dict) -> str:
-    """egl (GPU), then osmesa; install the GL system libraries once if neither works."""
+def _has_mujoco(repo: Path, env: dict) -> bool:
+    r = subprocess.run([*_repo_python(repo), "-c", "import mujoco"], cwd=repo, env=env, capture_output=True)
+    return r.returncode == 0
+
+
+def pick_gl_backend(repo: Path, env: dict) -> str | None:
+    """egl (GPU), then osmesa; install the GL system libraries once if neither works. None when the job's own
+    Python has no mujoco to test with (another simulator, such as Genesis): then nothing can be probed here."""
+    if not _has_mujoco(repo, env):
+        if shutil.which("apt-get"):
+            _run(["apt-get", "install", "-y", "-qq", "libegl1", "libgl1", "libosmesa6"], check=False)
+        return None
     for backend in ("egl", "osmesa"):
         if _can_render(repo, backend, env):
             return backend
@@ -482,10 +492,15 @@ def run_job(job: dict, workdir: Path, drive_root: Path | None) -> None:
     install(job, repo, env)
     if job["mujoco_gl"]:
         backend = pick_gl_backend(repo, env)
-        log(f"MUJOCO_GL={backend}" + ("" if backend != "disable" else " (videos turned off)"))
-        env["MUJOCO_GL"] = env["PYOPENGL_PLATFORM"] = backend
-        if backend == "disable":
-            job["video"]["every"] = 0
+        if backend is None:
+            log("no mujoco in the job's Python to probe GL with: GL libraries installed, MUJOCO_GL and "
+                "PYOPENGL_PLATFORM left as the job sets them")
+        else:
+            log(f"MUJOCO_GL={backend}" + ("" if backend != "disable" else " (videos turned off)"))
+            env["MUJOCO_GL"] = backend
+            env["PYOPENGL_PLATFORM"] = job["env"].get("PYOPENGL_PLATFORM", backend)  # the job's choice wins
+            if backend == "disable":
+                job["video"]["every"] = 0
 
     drive_run = None
     if job["resume"]["source"] == "drive":
