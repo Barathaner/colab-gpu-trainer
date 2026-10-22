@@ -271,8 +271,9 @@ def find_job_page(ctx: Any, saved_url: str | None, stem: str) -> Any:
     """The Colab tab of one run: the URL saved at launch, else a title containing the notebook name."""
     pages = list(ctx.pages)
     if saved_url:
+        base = saved_url.split("#")[0]
         for p in pages:
-            if p.url == saved_url:
+            if p.url.split("#")[0] == base:  # Colab appends #scrollTo=... once the notebook scrolls
                 return p
     for p in pages:
         if stem and stem in (p.title() or ""):

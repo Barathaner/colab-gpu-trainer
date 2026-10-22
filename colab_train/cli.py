@@ -1040,7 +1040,8 @@ def cmd_worker(args) -> int:
           f"max_resumes {st['max_resumes']}, backoff {st['backoff_h']:g} h. Ctrl+C to stop.", flush=True)
     env = worker.pythonpath_env()
     try:
-        worker.loop(st, interval, launcher=lambda item: worker.launch_child(item, env), once=args.once)
+        worker.loop(st, interval, launcher=lambda item: worker.launch_child(item, env), once=args.once,
+                    stopper=lambda item: worker.stop_child(item, env))
     except KeyboardInterrupt:
         print("worker stopped")
     return 0

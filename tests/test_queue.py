@@ -157,6 +157,18 @@ class DecideAndClassifyTest(Base):
 
 
 class RunOnceTest(Base):
+    def test_failed_run_gets_its_runtime_stopped(self):
+        cfg = worker.settings({})
+        it = q.add(str(self.dir / "k1-pickup.yaml"), "colab-1", name="k1-pickup")
+        worker.run_once(cfg, probe_fn=lambda _it: {}, launcher=lambda _c: (0, ""), now=NOW)
+        stopped = []
+        events = worker.run_once(cfg, probe_fn=lambda _it: {"run_state": None,
+                                                            "log_error": "training exited with 1"},
+                                 now="2026-10-21T12:05:00+00:00",
+                                 stopper=lambda item: (stopped.append(item["id"]), (0, ""))[1])
+        self.assertEqual(stopped, [it["id"]])
+        self.assertTrue(any("runtime stop after failure done" in e for e in events))
+
     def test_full_pass_launches_then_finishes_and_notifies(self):
         hook = self.dir / "hook.py"
         out = self.dir / "hook.out"

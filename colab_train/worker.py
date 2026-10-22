@@ -301,6 +301,16 @@ def launch_child(item: dict, cfg_env: dict) -> tuple[int, str]:
     return proc.returncode, proc.stdout + proc.stderr
 
 
+def stop_child(item: dict, cfg_env: dict) -> tuple[int, str]:
+    """Run `colab-train stop JOB --browser --yes` as a foreground child and return (rc, output)."""
+    argv = [sys.executable, "-m", "colab_train", "stop", item["job"], "--browser", "--yes"]
+    if item.get("run_name"):
+        argv += ["--run-name", item["run_name"]]
+    proc = subprocess.run(argv, cwd=item.get("workdir") or None, capture_output=True, text=True,
+                          env={**os.environ, **cfg_env}, timeout=600)
+    return proc.returncode, proc.stdout + proc.stderr
+
+
 def pythonpath_env() -> dict:
     root = str(Path(__file__).resolve().parent.parent)
     return {"PYTHONPATH": root + (os.pathsep + os.environ["PYTHONPATH"] if os.environ.get("PYTHONPATH") else "")}
@@ -309,7 +319,8 @@ def pythonpath_env() -> dict:
 # ---------------------------------------------------------------- one pass and the loop
 
 def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
-             launcher: Callable[[dict], tuple[int, str]] | None = None, now: str | None = None) -> list[str]:
+             launcher: Callable[[dict], tuple[int, str]] | None = None, now: str | None = None,
+             stopper: Callable[[dict], tuple[int, str]] | None = None) -> list[str]:
     """One reconcile pass plus at most one launch. Returns the event lines it wrote."""
     config_probe = probe_fn or _default_probe
     now = now or now_iso()
@@ -334,6 +345,11 @@ def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
         if res:
             events.append(res["event"])
             notify(res["item"], res["event"], cfg, now)
+            if res["item"]["status"] == "failed" and stopper is not None:
+                # a failed run's runtime would sit idle and use compute units until Colab ends it
+                rc, out = stopper(res["item"])
+                events.append(f"{res['item']['job']}: runtime stop after failure "
+                              f"{'done' if rc == 0 else 'FAILED, stop it by hand'}")
     launch_next = decide_launch(q.snapshot(), cfg, now)
     if launch_next and launcher is not None:
         cur_id = launch_next["id"]
@@ -392,10 +408,11 @@ def _default_probe(item: dict) -> dict:
 
 
 def loop(cfg: dict, interval_s: float, probe_fn: Callable[[dict], dict] | None = None,
-         launcher: Callable[[dict], tuple[int, str]] | None = None, once: bool = False) -> None:
+         launcher: Callable[[dict], tuple[int, str]] | None = None, once: bool = False,
+         stopper: Callable[[dict], tuple[int, str]] | None = None) -> None:
     """Foreground loop. Ctrl+C stops it; nothing is detached."""
     while True:
-        for line in run_once(cfg, probe_fn, launcher):
+        for line in run_once(cfg, probe_fn, launcher, stopper=stopper):
             print(line, flush=True)
         if once:
             return
