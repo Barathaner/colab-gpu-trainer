@@ -245,6 +245,9 @@ def probe(item: dict, job_ref: str, run_name: str | None, workdir: str | None) -
             job = spec.load(spec.resolve_job_arg(job_ref), run_name=run_name)
             job_name, wandb_on = job["name"], job["wandb"]["mode"] != "disabled"
             run = wandb_status.find_run(job) if wandb_on else None
+            if run is not None and run.state != "running" and \
+                    str(getattr(run, "heartbeat_at", "") or "") < str(item.get("started") or "")[:19]:
+                run = None  # the previous attempt's run, not yet resumed by this launch: no verdict from it yet
             if run is not None:
                 s = wandb_status.summarize(job, run)
                 out.update({"run_state": s.get("state"), "iteration": s.get("iteration"),
