@@ -264,6 +264,9 @@ def probe(item: dict, job_ref: str, run_name: str | None, workdir: str | None) -
     if not wandb_on and lines is not None:
         out.update(parse_tab_lines(lines))
     elif lines is not None and out.get("run_state") is None:
+        # W&B on but no run found under run_id: the tab's own progress lines still show a live run
+        tab = parse_tab_lines(lines)
+        out.update({k: tab[k] for k in ("iteration", "max_iters", "run_state") if k in tab})
         out.update(early_exit_from_tab(lines))
     return out
 

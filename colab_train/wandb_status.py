@@ -40,10 +40,16 @@ def project_path(job: dict) -> str:
 
 
 def find_run(job: dict, api: Any = None, run_id: str | None = None):
-    """Newest run whose name ends with the run id (the runner names runs exactly run_id; the
-    training framework may prefix a timestamp). Bench runs are skipped."""
+    """The run with id run_id, else the newest run whose name ends with the run id (the runner names runs
+    exactly run_id; the training framework may prefix a timestamp or use its own name). Bench runs are skipped."""
     api = api or _api()
     rid = run_id or job["derived"]["run_id"]
+    try:  # the runner sets WANDB_RUN_ID=run_id; a trainer may still pick its own display name
+        r = api.run(f"{project_path(job)}/{rid}")
+        if r is not None and not r.name.endswith("-bench"):
+            return r
+    except Exception:  # noqa: BLE001 - no run with that id: search the names below
+        pass
     runs = itertools.islice(api.runs(project_path(job), order="-created_at", per_page=100), 400)
     for r in runs:
         if r.name.endswith(rid) and not r.name.endswith("-bench"):

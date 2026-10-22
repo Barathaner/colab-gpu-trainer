@@ -326,7 +326,7 @@ def restore_drive(job: dict, repo: Path, drive_run: Path) -> Resume | None:
 
 
 def restore_wandb(job: dict, repo: Path) -> Resume | None:
-    """Download the newest checkpoint file of the newest W&B run whose name ends with run_id."""
+    """Download the newest checkpoint file of the W&B run with id run_id, else the newest whose name ends with it."""
     import wandb  # lazy: only needed for W&B resume
 
     d = job["derived"]
@@ -336,7 +336,9 @@ def restore_wandb(job: dict, repo: Path) -> Resume | None:
     except Exception as e:  # no network, no such project: start fresh
         log(f"W&B resume lookup failed ({type(e).__name__}); starting fresh.")
         return None
-    run = next((r for r in runs if r.name.endswith(d["run_id"]) and not r.name.endswith("-bench")), None)
+    # the run id first: a trainer may use its own display name while WANDB_RUN_ID=run_id keeps the id
+    run = next((r for r in runs if r.id == d["run_id"]), None) or \
+        next((r for r in runs if r.name.endswith(d["run_id"]) and not r.name.endswith("-bench")), None)
     if run is None:
         return None
     ckpts = []
