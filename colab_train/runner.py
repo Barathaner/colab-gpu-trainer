@@ -182,6 +182,9 @@ def clone_or_update(job: dict, workdir: Path) -> Path:
 
 def build_env(job: dict) -> dict:
     env = dict(os.environ)
+    if env.get("MPLBACKEND", "").startswith("module://"):
+        # Colab's inline backend lives in its own Python; matplotlib in the job's venv rejects it
+        env["MPLBACKEND"] = "Agg"
     if job.get("python"):
         env["UV_PYTHON"] = str(job["python"])
         env["UV_PYTHON_PREFERENCE"] = "only-managed"

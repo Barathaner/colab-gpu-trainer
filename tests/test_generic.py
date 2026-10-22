@@ -48,6 +48,8 @@ class ExampleJobTests(unittest.TestCase):
         self.assertIn("accelerator", render.render_notebook(job)["metadata"])
         self.assertNotIn("gpuType", render.render_notebook(job)["metadata"]["colab"])
         self.assertEqual(runner.build_env(job)["WANDB_MODE"], "disabled")  # trainers that call wandb.init anyway
+        with mock.patch.dict(os.environ, {"MPLBACKEND": "module://matplotlib_inline.backend_inline"}):
+            self.assertEqual(runner.build_env(job)["MPLBACKEND"], "Agg")  # Colab's inline backend breaks a venv
 
     def test_sb3_progress_regex_reads_logger_table(self):
         job = spec.load_text(spec.preset_text("sb3-ppo"))
