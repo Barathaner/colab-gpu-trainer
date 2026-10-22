@@ -137,6 +137,12 @@ class ProgressAndResumeTests(unittest.TestCase):
         fresh = runner.train_context(job, Path("/w/repo"), None)
         self.assertEqual(fresh["resume_args"], "")
 
+
+    def test_resume_of_a_warm_started_run_counts_its_own_iterations(self):
+        res = runner.Resume(run_name="r", checkpoint="model_18250.pt", iteration=18250, path=Path("x"),
+                            first_iteration=17501)
+        self.assertEqual(res.done, 749)  # max_iters 2500 then leaves 1751 to train, not "nothing to train"
+        self.assertEqual(runner.Resume(run_name="r", checkpoint="m", iteration=900, path=Path("x")).done, 900)
     def test_checkpoint_discovery_picks_highest_iteration(self):
         job = spec.load_text(spec.preset_text("example-pytorch"))
         with tempfile.TemporaryDirectory() as tmp:

@@ -76,7 +76,7 @@ def train_context(job: dict, repo: Path, resume: "Resume | None") -> dict:
         # Frameworks such as rsl_rl restart their loop at the loaded iteration and run
         # num_learning_iterations more, so iters_mode "remaining" = max_iters - start.
         if job["resume"]["iters_mode"] == "remaining":
-            ctx["iters"] = max(t["max_iters"] - resume.iteration, 1)
+            ctx["iters"] = max(t["max_iters"] - resume.done, 1)
         else:
             ctx["iters"] = t["max_iters"]
         args = expand(job["resume"]["args"], {
@@ -260,6 +260,12 @@ class Resume:
     checkpoint: str
     iteration: int
     path: Path
+    first_iteration: int = 0  # first iteration the run logged: > 0 when it continued another run's count
+
+    @property
+    def done(self) -> int:
+        """Iterations this run has trained (max_iters counts these, not the checkpoint's number)."""
+        return max(self.iteration - self.first_iteration, 0)
 
 
 def _iteration(job: dict, name: str) -> int | None:
@@ -359,7 +365,14 @@ def restore_wandb(job: dict, repo: Path) -> Resume | None:
     fh = f.download(root=str(dst_dir), replace=True)
     local = Path(fh.name).resolve()
     fh.close()
-    return Resume(run_name=run.name, checkpoint=local.name, iteration=iteration, path=local)
+    first = 0
+    try:  # a run that continued another run's count (warm start at 17500) logs its first step there
+        row = next(iter(run.scan_history(keys=[job["wandb"]["iteration_key"]], page_size=1)), None)
+        first = int(row[job["wandb"]["iteration_key"]]) if row else 0
+    except Exception:  # noqa: BLE001 - no history: count from 0 as before
+        first = 0
+    return Resume(run_name=run.name, checkpoint=local.name, iteration=iteration, path=local,
+                  first_iteration=first if 0 < first <= iteration else 0)
 
 
 # ---------------------------------------------------------------- progress (no W&B needed)
@@ -522,7 +535,7 @@ def run_job(job: dict, workdir: Path, drive_root: Path | None) -> None:
     if resume is not None:
         start = resume.iteration
         log(f"Resuming {resume.run_name} from {resume.checkpoint} (iteration {start}, {source}).")
-        if start >= job["train"]["max_iters"] - 1:
+        if resume.done >= job["train"]["max_iters"] - 1:
             log(f"Checkpoint {start} already reaches max_iters {job['train']['max_iters']}: nothing to train.")
             resume_done = True
         else:
