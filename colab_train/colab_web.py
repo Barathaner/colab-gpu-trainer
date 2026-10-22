@@ -171,8 +171,12 @@ SESSION_LIMIT = re.compile(r"too many (active )?sessions", re.I)
 
 
 def session_limit(page: Any) -> bool:
-    """Only VISIBLE dialogs count: hidden text on the page would match forever."""
-    return any(SESSION_LIMIT.search(t) for t in browser.dialog_texts(page))
+    """Only VISIBLE dialogs count: hidden text on the page would match forever. Colab's dialog can sit in a shadow
+    root that querySelectorAll does not enter, so Playwright's text locator (which does) is asked too."""
+    if any(SESSION_LIMIT.search(t) for t in browser.dialog_texts(page)):
+        return True
+    hits = page.get_by_text(SESSION_LIMIT)
+    return any(hits.nth(i).is_visible() for i in range(hits.count()))
 
 
 def dismiss_session_limit(page: Any) -> bool:
@@ -242,9 +246,15 @@ def disconnect_and_delete(page: Any) -> bool:
     (after a finished run Colab offers Reconnect instead of Connect)."""
     _open_options(page)
     item = page.get_by_role("menuitem", name=DISCONNECT_NAMES).first
-    if item.get_attribute("aria-disabled") == "true":  # no runtime attached: nothing to delete
+    for _ in range(8):  # the item can stay greyed out for a few seconds; it is not proof that no runtime exists
+        if item.get_attribute("aria-disabled") != "true":
+            break
         page.keyboard.press("Escape")
-        return True
+        page.wait_for_timeout(2000)
+        _open_options(page)
+    else:
+        page.keyboard.press("Escape")
+        return page.get_by_role("button", name=re.compile(r"^(Connect|Reconnect|Verbinden)\b")).count() > 0
     item.click()
     for names in (("Yes",), ("Disconnect and delete runtime", "Disconnect and delete"), ("Delete", "OK")):
         if click_dialog_button(page, names):
