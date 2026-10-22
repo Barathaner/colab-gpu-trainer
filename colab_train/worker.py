@@ -101,6 +101,9 @@ def reconcile(item: dict, probe: dict, now: str, cfg: dict) -> dict:
     if run_state == "finished" or (it_now is not None and max_it is not None and it_now >= max_it):
         return {**out, "status": "finished", "reason": "max_iters reached or W&B finished",
                 "event": f"{item['job']}: FINISHED at iteration {it_now}"}
+    if run_state is None and "run_state" not in probe and probe.get("probe_error"):
+        # W&B was not asked (e.g. the job file no longer loads): unknown, not "no run". Never fail or stop on that.
+        return {**out, "status": "running", "reason": f"probe error ({probe['probe_error']}); job left running"}
     if run_state is None:
         if _ago_min(item.get("started"), now) > NO_RUN_TIMEOUT_MIN:
             return {**out, "status": "failed",

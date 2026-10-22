@@ -102,6 +102,12 @@ class ReconcileTest(Base):
                                 {"run_state": "running", "iteration": 13}, late, CFG)
         self.assertEqual(back["status"], "running")
 
+    def test_probe_error_never_fails_a_running_job(self):
+        # e.g. the job file was edited with a key this worker's spec does not know: W&B was never asked
+        ch = worker.reconcile(item(), {"probe_error": "SpecError"}, "2026-10-21T15:00:00+00:00", CFG)
+        self.assertEqual(ch["status"], "running")
+        self.assertIn("probe error", ch["reason"])
+
     def test_no_wandb_run_for_45_min_is_failed_but_not_before(self):
         self.assertEqual(worker.reconcile(item(), {"run_state": None}, "2026-10-21T12:30:00+00:00", CFG)["status"],
                          "running")
