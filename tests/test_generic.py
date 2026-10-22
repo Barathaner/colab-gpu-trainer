@@ -138,6 +138,14 @@ class ProgressAndResumeTests(unittest.TestCase):
         self.assertEqual(fresh["resume_args"], "")
 
 
+    def test_commands_with_shell_syntax_run_through_bash(self):
+        self.assertEqual(runner.split_command("uv sync --frozen"), ["uv", "sync", "--frozen"])
+        self.assertEqual(runner.split_command("test -s ~/a.npz && test -s ~/b.gz"),
+                         ["bash", "-c", "test -s ~/a.npz && test -s ~/b.gz"])
+        self.assertEqual(runner.split_command("python x.py $(echo --flag)")[:2], ["bash", "-c"])
+        self.assertEqual(runner.split_command("bash -c 'a; b'"), ["bash", "-c", "a; b"])  # already wrapped
+        self.assertEqual(runner.split_command("train --name a-b_c.d"), ["train", "--name", "a-b_c.d"])
+
     def test_resume_of_a_warm_started_run_counts_its_own_iterations(self):
         res = runner.Resume(run_name="r", checkpoint="model_18250.pt", iteration=18250, path=Path("x"),
                             first_iteration=17501)

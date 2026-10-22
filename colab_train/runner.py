@@ -37,6 +37,18 @@ def log(msg: str) -> None:
     print(f"{LOG} {msg}", flush=True)
 
 
+_SHELL_SYNTAX = re.compile(r"&&|\|\||[|;<>`]|\$\(|\$\{|(^|\s)~/")
+
+
+def split_command(cmd: str) -> list[str]:
+    """argv for one command. A command with shell syntax (&&, |, ;, >, $(...), ~/) runs through bash -c, which is
+    what a job author writing it expects; a plain command is split without a shell."""
+    words = shlex.split(cmd)
+    if words[:1] in (["bash"], ["sh"]) and words[1:2] in (["-c"], ["-lc"]):
+        return words  # already wrapped by the job
+    return ["bash", "-c", cmd] if _SHELL_SYNTAX.search(cmd) else words
+
+
 def expand(template: str, ctx: dict, where: str = "template") -> str:
     def rep(m: re.Match) -> str:
         key = m.group(1)
@@ -116,17 +128,17 @@ def write_resume_shim(workdir: Path) -> Path:
 
 def build_train_command(job: dict, repo: Path, resume: "Resume | None") -> list[str]:
     ctx = train_context(job, repo, resume)
-    return shlex.split(expand(job["train"]["command"], ctx, "train.command"))
+    return split_command(expand(job["train"]["command"], ctx, "train.command"))
 
 
 def build_install_commands(job: dict, repo: Path) -> list[list[str]]:
     ctx = base_ctx(job, repo)
-    return [shlex.split(expand(c, ctx, f"install[{i}]")) for i, c in enumerate(job["install"])]
+    return [split_command(expand(c, ctx, f"install[{i}]")) for i, c in enumerate(job["install"])]
 
 
 def build_bench_command(job: dict, repo: Path, checkpoint: Path, json_path: Path) -> list[str]:
     ctx = {**base_ctx(job, repo), "checkpoint": str(checkpoint), "bench_json": str(json_path)}
-    return shlex.split(expand(job["bench"]["command"], ctx, "bench.command"))
+    return split_command(expand(job["bench"]["command"], ctx, "bench.command"))
 
 
 # ---------------------------------------------------------------- git
