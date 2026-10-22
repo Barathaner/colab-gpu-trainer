@@ -644,6 +644,8 @@ def _guard_one_runtime(job: dict, force: bool) -> str | None:
         print(f"note: {', '.join(others)} also has a runtime; running in parallel (max_parallel {limit})")
     if state.get(name, {}).get("browser_running"):
         return f"{name} already has a browser runtime recorded. Stop it first or pass --force"
+    if job["wandb"]["mode"] == "disabled":
+        return None
     try:
         from . import wandb_status
         run = wandb_status.find_run(job)
