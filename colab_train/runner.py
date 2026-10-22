@@ -37,7 +37,7 @@ def log(msg: str) -> None:
     print(f"{LOG} {msg}", flush=True)
 
 
-_SHELL_SYNTAX = re.compile(r"&&|\|\||[|;<>`]|\$\(|\$\{|(^|\s)~/")
+_SHELL_SYNTAX = re.compile(r"&&|\|\||[|;<>`]|\$\(|\$\{|(^|\s)~/|^\s*[A-Za-z_][A-Za-z0-9_]*=")  # last: VAR=x cmd
 
 
 def split_command(cmd: str) -> list[str]:

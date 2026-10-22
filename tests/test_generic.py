@@ -158,6 +158,8 @@ class ProgressAndResumeTests(unittest.TestCase):
         self.assertEqual(runner.split_command("python x.py $(echo --flag)")[:2], ["bash", "-c"])
         self.assertEqual(runner.split_command("bash -c 'a; b'"), ["bash", "-c", "a; b"])  # already wrapped
         self.assertEqual(runner.split_command("train --name a-b_c.d"), ["train", "--name", "a-b_c.d"])
+        self.assertEqual(runner.split_command("A=1 B=x train --n 2")[:2], ["bash", "-c"])  # env assignments
+        self.assertEqual(runner.split_command("train --opt a=1"), ["train", "--opt", "a=1"])
 
     def test_resume_of_a_warm_started_run_counts_its_own_iterations(self):
         res = runner.Resume(run_name="r", checkpoint="model_18250.pt", iteration=18250, path=Path("x"),
