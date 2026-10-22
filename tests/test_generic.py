@@ -138,6 +138,17 @@ class ProgressAndResumeTests(unittest.TestCase):
         self.assertEqual(fresh["resume_args"], "")
 
 
+    def test_doctor_media_checks_for_eval_jobs(self):
+        job = spec.load_text(spec.preset_text("cleanrl-ppo-cartpole"))
+        self.assertEqual(cli.media_checks(job), [])  # no W&B, no video: nothing to say
+        job["train"]["command"] = "bash -c 'python eval.py --log-to-wandb --video'"
+        labels = [r[1] for r in cli.media_checks(job)]
+        self.assertIn("W&B is off but the commands use W&B", labels)
+        self.assertIn("videos without GL setup", labels)
+        job["wandb"]["mode"], job["mujoco_gl"] = "online", True
+        rows = cli.media_checks(job)
+        self.assertEqual([r[0] for r in rows], ["ok"])
+
     def test_commands_with_shell_syntax_run_through_bash(self):
         self.assertEqual(runner.split_command("uv sync --frozen"), ["uv", "sync", "--frozen"])
         self.assertEqual(runner.split_command("test -s ~/a.npz && test -s ~/b.gz"),

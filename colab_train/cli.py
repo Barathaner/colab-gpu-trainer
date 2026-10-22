@@ -269,6 +269,37 @@ def _repo_reachable(job: dict, token: str | None) -> tuple[bool, str]:
     return True, (f"{branch or 'HEAD'} {sha}" if sha else "reachable")
 
 
+_MEDIA_WORDS = re.compile(r"video|render|mp4|ffmpeg|highlight|clip", re.I)
+_WANDB_WORDS = re.compile(r"wandb|log-to-wandb|WANDB_", re.I)
+
+
+def media_checks(job: dict) -> list[tuple[str, str, str, str]]:
+    """(level, label, detail, fix) rows for what charts, videos and W&B media uploads need on Colab."""
+    cmds = " ".join([job["train"].get("command") or "", (job.get("bench") or {}).get("command") or "",
+                     *job.get("install", []), *job["env"].keys(), *map(str, job["env"].values())])
+    rows = []
+    mode = job["wandb"]["mode"]
+    if mode == "disabled" and _WANDB_WORDS.search(cmds):
+        rows.append(("warn", "W&B is off but the commands use W&B",
+                     "the runner sets WANDB_MODE=disabled on Colab, so the script's own charts, videos and files "
+                     "are not uploaded", "set wandb.mode: online (and wandb.api_key_secret) in the job"))
+    elif mode == "offline":
+        rows.append(("warn", "W&B mode offline", "charts and media stay on the Colab disk and are lost with it",
+                     "set wandb.mode: online"))
+    if job["env"].get("WANDB_MODE") in ("disabled", "offline"):
+        rows.append(("warn", f"env WANDB_MODE={job['env']['WANDB_MODE']}", "no W&B uploads from the scripts",
+                     "remove WANDB_MODE from job.env"))
+    wants_media = job["video"]["every"] > 0 or bool(_MEDIA_WORDS.search(cmds))
+    if wants_media and not job["mujoco_gl"]:
+        rows.append(("warn", "videos without GL setup", "the job renders videos but mujoco_gl is false, so no "
+                     "EGL/OSMesa libraries and no MUJOCO_GL/PYOPENGL_PLATFORM are set on Colab",
+                     "set mujoco_gl: true in the job"))
+    elif wants_media:
+        rows.append(("ok", "video rendering set up", "mujoco_gl: EGL (else OSMesa) and ffmpeg are prepared on Colab",
+                     ""))
+    return rows
+
+
 def cmd_doctor(args) -> int:
     fails = 0
 
@@ -335,6 +366,8 @@ def cmd_doctor(args) -> int:
             else:
                 row("warn", f"secret {name} not set locally", "fine if it is in Colab Secrets already",
                     f"colab-train secrets set {name}   (or add {name} in Colab Secrets, Notebook access ON)")
+        for level, label, detail, fix in media_checks(job):
+            row(level, label, detail, fix)
         if job["wandb"]["mode"] == "online" and not wandb_status.installed():
             row("FAIL", "wandb not installed", "this job logs to W&B; status, logs and the worker need it",
                 wandb_status.INSTALL_HINT)

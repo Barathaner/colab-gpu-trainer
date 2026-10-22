@@ -240,6 +240,13 @@ def _can_render(repo: Path, backend: str, env: dict) -> bool:
     return r.returncode == 0
 
 
+def ensure_ffmpeg() -> None:
+    """Video writers (mediapy, imageio, moviepy) need ffmpeg; install it once when the runtime lacks it."""
+    if shutil.which("ffmpeg") is None and shutil.which("apt-get"):
+        _run(["apt-get", "install", "-y", "-qq", "ffmpeg"], check=False)
+    log(f"ffmpeg: {shutil.which('ffmpeg') or 'missing (videos cannot be encoded)'}")
+
+
 def _has_mujoco(repo: Path, env: dict) -> bool:
     r = subprocess.run([*_repo_python(repo), "-c", "import mujoco"], cwd=repo, env=env, capture_output=True)
     return r.returncode == 0
@@ -518,6 +525,7 @@ def run_job(job: dict, workdir: Path, drive_root: Path | None) -> None:
             _run([sys.executable, "-m", "pip", "install", "-q", "wandb"])
     install(job, repo, env)
     if job["mujoco_gl"]:
+        ensure_ffmpeg()
         backend = pick_gl_backend(repo, env)
         if backend is None:
             log("no mujoco in the job's Python to probe GL with: GL libraries installed, MUJOCO_GL and "
