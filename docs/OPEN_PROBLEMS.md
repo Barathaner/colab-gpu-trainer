@@ -20,6 +20,15 @@ State as of 2026-10-21. Ordered by how much they matter to a user.
    in Colab with Notebook access on. `doctor` checks local values and repo access, not what Colab holds.
 6. **Fine-grained GitHub tokens read only the repos they list.** A new private repo needs to be added to the token's
    Repository access on GitHub; `doctor` reports a 403 and names this fix.
+7. **Resuming a W&B run whose history runs past the checkpoint loses the log.** W&B drops steps at or below the
+   run's highest logged step, so a run stopped at 18397 and resumed from model_18250 logs nothing until it passes
+   18397, and its state can stay "crashed". The worker then sees no progress. Resume should start a new run id (or use
+   W&B's rewind) when the history is ahead of the checkpoint.
+8. **A very chatty trainer can freeze the Colab tab.** The cell echoes every stdout line; a trainer that prints
+   thousands of lines per minute makes the page, and with it the browser automation, unresponsive. The runner should
+   echo only progress and error lines to the cell and keep the full log in a file.
+9. **Colab Pro limits L4 sessions.** At most two L4 runtimes at once; a third session works only on a T4. The worker
+   does not know GPU types yet and retries a refused third L4 every 10 minutes.
 
 ## Ideas
 
