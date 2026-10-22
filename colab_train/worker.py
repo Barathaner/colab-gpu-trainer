@@ -153,9 +153,11 @@ def classify_launch(rc: int, output: str) -> tuple[str, str]:
             return "queued-blocked", reason
         if HUMAN_STOP.search(reason):
             return "needs-human", reason
-    if re.search(r"refused:", output):
-        # a local count (max_parallel or a stale runtime record), not Colab's quota: retry soon, not after backoff_h
-        return "queued-session", "refused by the local guard (runtimes recorded >= max_parallel)"
+    refused = re.search(r"refused: ([^\n]*)", output)
+    if refused:
+        # the local guard (max_parallel, a runtime record, or a W&B run still marked running), not Colab's quota:
+        # retry soon, not after backoff_h
+        return "queued-session", f"refused by the local guard: {refused.group(1)[:150]}"
     lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
     # a multi-line error message ends with its screenshot path; its first line names the error
     err = next((ln for ln in lines if re.match(r"(error|[A-Za-z]*Error)\b", ln)), None)
