@@ -170,6 +170,13 @@ class RunOnceTest(Base):
         data["items"][1]["status"] = "finished"
         self.assertEqual(worker.decide_launch(data, cfg, NOW, gpu_of=lambda it: gpus[it["id"]])["id"], "c")
 
+    def test_a_hanging_browser_probe_times_out_as_unknown(self):
+        import time
+        with mock.patch.object(worker, "browser_tab_once", lambda url, stem: time.sleep(5) or (True, [])):
+            t0 = time.monotonic()
+            self.assertEqual(worker.browser_tab("u", "s", timeout_s=0.2), (None, None))
+            self.assertLess(time.monotonic() - t0, 2)
+
     def test_failed_run_gets_its_runtime_stopped(self):
         cfg = worker.settings({})
         it = q.add(str(self.dir / "k1-pickup.yaml"), "colab-1", name="k1-pickup")

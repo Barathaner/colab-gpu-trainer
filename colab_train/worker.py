@@ -313,7 +313,22 @@ def probe(item: dict, job_ref: str, run_name: str | None, workdir: str | None) -
     return out
 
 
-def browser_tab(url: str | None, stem: str) -> tuple[bool | None, list[str] | None]:
+BROWSER_PROBE_TIMEOUT_S = 90
+
+
+def browser_tab(url: str | None, stem: str, timeout_s: float = BROWSER_PROBE_TIMEOUT_S
+                ) -> tuple[bool | None, list[str] | None]:
+    """browser_tab_once with a deadline: a frozen tab or a browser that does not answer must not stall the worker
+    (it did for 20 minutes once). After the deadline the answer is unknown, (None, None)."""
+    import threading
+    box: list = []
+    t = threading.Thread(target=lambda: box.append(browser_tab_once(url, stem)), daemon=True)
+    t.start()
+    t.join(timeout_s)
+    return box[0] if box else (None, None)
+
+
+def browser_tab_once(url: str | None, stem: str) -> tuple[bool | None, list[str] | None]:
     """(runtime gone, runner lines) for the job's Colab tab. Gone = tab missing or a Reconnect button.
     (None, None) when the browser is not reachable or the tab is unknown: unknown, do not act on it."""
     if not url and not stem:
