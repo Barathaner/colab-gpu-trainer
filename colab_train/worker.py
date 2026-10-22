@@ -54,6 +54,8 @@ def settings(config: dict) -> dict:
         "interval_s": num("interval_s", 120),
         "notify_cmd": config.get("notify_cmd") or None,
         "error_pane": config.get("error_pane") or None,
+        # per GPU type, how many runtimes Colab gives at once (Colab Pro: {"L4": 2}); other types: max_parallel only
+        "gpu_limits": {str(k): int(v) for k, v in (config.get("gpu_limits") or {}).items()},
     }
 
 
@@ -135,11 +137,44 @@ def reconcile(item: dict, probe: dict, now: str, cfg: dict) -> dict:
     return out
 
 
-def decide_launch(data: dict, cfg: dict, now: str) -> dict | None:
-    """The next queued item to launch, or None when the slot is full or the queue is blocked."""
+def item_gpu(item: dict) -> str | None:
+    """The job's runtime.gpu_type (read from its job file), or None when it cannot be read."""
+    try:
+        from . import spec
+        old = Path.cwd()
+        try:
+            if item.get("workdir"):
+                os.chdir(item["workdir"])
+            job = spec.load(spec.resolve_job_arg(item["job"]), run_name=item.get("run_name"))
+        finally:
+            os.chdir(old)
+        return job["runtime"].get("gpu_type")
+    except Exception:  # noqa: BLE001 - unreadable job: no GPU limit applies to it
+        return None
+
+
+def decide_launch(data: dict, cfg: dict, now: str, gpu_of: Callable[[dict], str | None] = item_gpu) -> dict | None:
+    """The next queued item to launch, or None when the slot is full or the queue is blocked. A job whose GPU type
+    is at its gpu_limits count is skipped, so a T4 job behind a waiting L4 job still starts."""
     if q.running_count(data) >= cfg["max_parallel"]:
         return None
-    return q.next_queued(data, now)
+    limits = cfg.get("gpu_limits") or {}
+    if not limits:
+        return q.next_queued(data, now)
+    if data.get("blocked_until") and data["blocked_until"] > now:
+        return None
+    busy: dict[str, int] = {}
+    for it in data["items"]:
+        if it["status"] in ("running", "stalled", "launching"):
+            g = gpu_of(it)
+            busy[g] = busy.get(g, 0) + 1
+    for it in sorted((i for i in data["items"] if i["status"] == "queued"),
+                     key=lambda i: (-i["priority"], i["submitted"])):
+        g = gpu_of(it)
+        if g in limits and busy.get(g, 0) >= limits[g]:
+            continue
+        return it
+    return None
 
 
 def classify_launch(rc: int, output: str) -> tuple[str, str]:

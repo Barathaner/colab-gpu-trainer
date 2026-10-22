@@ -157,6 +157,19 @@ class DecideAndClassifyTest(Base):
 
 
 class RunOnceTest(Base):
+    def test_gpu_limit_lets_a_t4_job_pass_a_waiting_l4_job(self):
+        cfg = worker.settings({"max_parallel": 3, "gpu_limits": {"L4": 2}})
+        gpus = {"a": "L4", "b": "L4", "c": "L4", "d": "T4"}
+        data = {"items": [
+            {"id": "a", "status": "running", "priority": 1, "submitted": "1", "job": "a"},
+            {"id": "b", "status": "running", "priority": 1, "submitted": "2", "job": "b"},
+            {"id": "c", "status": "queued", "priority": 8, "submitted": "3", "job": "c"},
+            {"id": "d", "status": "queued", "priority": 5, "submitted": "4", "job": "d"}]}
+        pick = worker.decide_launch(data, cfg, NOW, gpu_of=lambda it: gpus[it["id"]])
+        self.assertEqual(pick["id"], "d")
+        data["items"][1]["status"] = "finished"
+        self.assertEqual(worker.decide_launch(data, cfg, NOW, gpu_of=lambda it: gpus[it["id"]])["id"], "c")
+
     def test_failed_run_gets_its_runtime_stopped(self):
         cfg = worker.settings({})
         it = q.add(str(self.dir / "k1-pickup.yaml"), "colab-1", name="k1-pickup")
