@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -154,6 +155,52 @@ def item_gpu(item: dict) -> str | None:
         return job["runtime"].get("gpu_type")
     except Exception:  # noqa: BLE001 - unreadable job: no GPU limit applies to it
         return None
+
+
+def item_run_id(item: dict) -> str | None:
+    """The job's run id (read from its job file), or None when it cannot be read."""
+    try:
+        from . import spec
+        old = Path.cwd()
+        try:
+            if item.get("workdir"):
+                os.chdir(item["workdir"])
+            job = spec.load(spec.resolve_job_arg(item["job"]), run_name=item.get("run_name"))
+        finally:
+            os.chdir(old)
+        return job["derived"]["run_id"]
+    except Exception:  # noqa: BLE001 - unreadable job: no results file to look for
+        return None
+
+
+RESULTS_WAIT_S = 180
+
+
+def results_dir() -> Path:
+    return q.queue_path().with_name("results")
+
+
+def fetch_results(item: dict, cfg: dict, wait_s: float = RESULTS_WAIT_S, poll_s: float = 10.0) -> str:
+    """Before a runtime is deleted: wait for the notebook's results download (colab-train-results-<run id>.tar.gz,
+    saved by the dedicated Chrome to its download folder) and move it to results/<run id>/. Returns an event line."""
+    rid = item_run_id(item)
+    if not rid:
+        return ""
+    downloads = Path(os.path.expanduser(cfg.get("downloads_dir") or "~/Downloads"))
+    since = dt.datetime.fromisoformat(item["started"]).timestamp() if item.get("started") else 0.0
+    deadline = time.time() + wait_s
+    while True:
+        found = [f for f in downloads.glob(f"colab-train-results-{rid}*.tar.gz")
+                 if f.is_file() and f.stat().st_mtime >= since]
+        if found:
+            src = max(found, key=lambda f: f.stat().st_mtime)
+            dst = results_dir() / rid / time.strftime("%Y%m%dT%H%M%S.tar.gz", time.gmtime(src.stat().st_mtime))
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), dst)
+            return f"{item['job']}: results saved to {dst}"
+        if time.time() >= deadline:
+            return f"{item['job']}: no results download from the notebook within {wait_s / 60:g} min"
+        time.sleep(poll_s)
 
 
 def decide_launch(data: dict, cfg: dict, now: str, gpu_of: Callable[[dict], str | None] = item_gpu) -> dict | None:
@@ -383,7 +430,8 @@ def pythonpath_env() -> dict:
 
 def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
              launcher: Callable[[dict], tuple[int, str]] | None = None, now: str | None = None,
-             stopper: Callable[[dict], tuple[int, str]] | None = None) -> list[str]:
+             stopper: Callable[[dict], tuple[int, str]] | None = None,
+             fetcher: Callable[[dict], str] | None = None) -> list[str]:
     """One reconcile pass plus at most one launch. Returns the event lines it wrote."""
     config_probe = probe_fn or _default_probe
     now = now or now_iso()
@@ -409,6 +457,10 @@ def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
             events.append(res["event"])
             notify(res["item"], res["event"], cfg, now)
             if res["item"]["status"] in ("failed", "finished") and stopper is not None:
+                # the notebook downloads the run's results when the runner exits; keep them before the runtime goes
+                note = fetcher(res["item"]) if fetcher is not None else ""
+                if note:
+                    events.append(note)
                 # an ended run's runtime would sit idle, use compute units and hold a Colab session
                 rc, out = stopper(res["item"])
                 events.append(f"{res['item']['job']}: runtime stop after {res['item']['status']} "
@@ -472,10 +524,11 @@ def _default_probe(item: dict) -> dict:
 
 def loop(cfg: dict, interval_s: float, probe_fn: Callable[[dict], dict] | None = None,
          launcher: Callable[[dict], tuple[int, str]] | None = None, once: bool = False,
-         stopper: Callable[[dict], tuple[int, str]] | None = None) -> None:
+         stopper: Callable[[dict], tuple[int, str]] | None = None,
+         fetcher: Callable[[dict], str] | None = None) -> None:
     """Foreground loop. Ctrl+C stops it; nothing is detached."""
     while True:
-        for line in run_once(cfg, probe_fn, launcher, stopper=stopper):
+        for line in run_once(cfg, probe_fn, launcher, stopper=stopper, fetcher=fetcher):
             print(line, flush=True)
         if once:
             return

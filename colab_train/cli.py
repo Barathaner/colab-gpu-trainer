@@ -1079,7 +1079,8 @@ def cmd_worker(args) -> int:
     env = worker.pythonpath_env()
     try:
         worker.loop(st, interval, launcher=lambda item: worker.launch_child(item, env), once=args.once,
-                    stopper=lambda item: worker.stop_child(item, env))
+                    stopper=lambda item: worker.stop_child(item, env),
+                    fetcher=lambda item: worker.fetch_results(item, cfg))
     except KeyboardInterrupt:
         print("worker stopped")
     return 0

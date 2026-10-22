@@ -176,6 +176,7 @@ A job is a YAML file (see `colab_train/presets/`). The main keys:
 | `name`, `description` | job name (lowercase, dashes); used for the run id and the state files |
 | `repo.url`, `repo.branch`, `repo.dir`, `repo.submodules` | git source (https only, no credentials in the URL) |
 | `repo.commit` | optional commit hash to pin the job to; later pushes to the branch then do not change what it trains. Every W&B run records the trained commit as `colab_train_git_commit` in its config |
+| `outputs` | optional list of globs (relative to the repo, e.g. `["eval/**/*.json"]`) of result files to keep. The runner copies them and every bench JSON into an outputs folder after each command, also a failed one; when the runner exits, the notebook packs that folder with its full log and downloads it through the browser, and `colab-train worker` moves the download to `~/.cache/colab-train/results/<run id>/` before it deletes the runtime (download folder: `downloads_dir` in the config, default `~/Downloads`) |
 | `repo.token_secret`, `repo.token_user` | Colab Secret name for a private repo, and the user name git expects with it |
 | `repo.fallback_url`, `repo.fallback_token_secret`, `repo.fallback_token_user` | optional second host, used only when the primary fails |
 | `python` | optional uv-managed Python version, e.g. `"3.13"`; null uses Colab's Python |

@@ -68,6 +68,7 @@ DEFAULTS: dict[str, Any] = {
                "experiment_config_key": None, "wandb_config_shim": False,
                "sync_extra": [], "iters_mode": "total", "args": ""},
     "bench": {"command": None},
+    "outputs": [],
     "limits": {"max_hours": 11.0},
     "runtime": {"accelerator": "GPU", "gpu_type": "T4"},
 }
@@ -150,6 +151,11 @@ def validate(raw: Any, run_name: str | None = None) -> tuple[dict, list[str]]:
                       "Store the value with `colab-train secrets set GITHUB_TOKEN`")
     if repo.get("token_user") and not re.fullmatch(r"[A-Za-z0-9._@-]+", str(repo["token_user"])):
         errors.append("repo.token_user: letters, digits, . _ @ - only (GitHub: x-access-token; other hosts: see their docs)")
+    outs = raw.get("outputs") if isinstance(raw, dict) else None
+    if outs is not None and (not isinstance(outs, list) or not all(isinstance(o, str) and o.strip() for o in outs)):
+        errors.append("outputs: a list of glob patterns relative to the repo, e.g. [\"bench/**/*.json\"]")
+    elif outs and any(o.startswith("/") or ".." in Path(o).parts for o in outs):
+        errors.append("outputs: patterns are relative to the repo (no leading / and no ..)")
     if repo.get("commit") is not None and not re.fullmatch(r"[0-9a-f]{7,40}", str(repo["commit"])):
         errors.append("repo.commit: a git commit hash (7 to 40 hex digits) to pin the job to, e.g. 6486b99")
     if repo.get("dir") is not None and not re.fullmatch(r"[A-Za-z0-9._-]+", str(repo["dir"])):

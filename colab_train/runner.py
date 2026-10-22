@@ -332,6 +332,35 @@ def newest_local_checkpoint(job: dict, repo: Path) -> Path | None:
     return best[1] if best else None
 
 
+OUTPUT_MAX_BYTES = 200 * 1024 * 1024  # a single result file larger than this is left out of the download
+
+
+def outputs_dir(workdir: Path) -> Path:
+    """The run's result files, packed and downloaded by the notebook when the runner exits (see render.py)."""
+    return workdir / "outputs"
+
+
+def collect_outputs(job: dict, repo: Path, out_dir: Path) -> list[str]:
+    """Copy the job's result files (bench JSONs and the job's outputs: globs) into out_dir, same relative paths.
+    Runs after every command, also a failed one, so a crashed upload inside a job never loses its files."""
+    copied: list[str] = []
+    for pat in ["bench/*.json", *job.get("outputs", [])]:
+        for src in repo.glob(pat):
+            if not src.is_file():
+                continue
+            size = src.stat().st_size
+            rel = src.relative_to(repo)
+            if size > OUTPUT_MAX_BYTES:
+                log(f"output {rel} is {size / 1e6:.0f} MB: left out of the results download")
+                continue
+            dst = out_dir / rel
+            if dst.exists() and dst.stat().st_size == size and dst.stat().st_mtime >= src.stat().st_mtime:
+                continue
+            _atomic_copy(src, dst)
+            copied.append(str(rel))
+    return copied
+
+
 def sync_up(job: dict, repo: Path, drive_run: Path) -> list[str]:
     """Copy checkpoints and sync_extra files to Drive (same relative paths). Only complete files."""
     copied: list[str] = []
@@ -455,7 +484,8 @@ def _pump(stream, job: dict, seen: dict) -> None:
 
 # ---------------------------------------------------------------- train and bench
 
-def train(job: dict, repo: Path, cmd: list[str], env: dict, drive_run: Path | None) -> int:
+def train(job: dict, repo: Path, cmd: list[str], env: dict, drive_run: Path | None,
+          out_dir: Path | None = None) -> int:
     log("$ " + " ".join(shlex.quote(c) for c in cmd))
     budget = job["limits"]["max_hours"] * 3600
     # stdout and stderr go through one pipe; a reader thread echoes lines and parses progress while this loop
@@ -467,6 +497,7 @@ def train(job: dict, repo: Path, cmd: list[str], env: dict, drive_run: Path | No
     reader.start()
     t0 = time.time()
     last_sync = 0.0
+    last_out = time.time()
     stopped = False
     while proc.poll() is None:
         if drive_run is not None and time.time() - last_sync >= SYNC_EVERY_S:
@@ -474,6 +505,9 @@ def train(job: dict, repo: Path, cmd: list[str], env: dict, drive_run: Path | No
             if copied:
                 log(f"Synced {len(copied)} file(s) to Drive.")
             last_sync = time.time()
+        if out_dir is not None and time.time() - last_out >= SYNC_EVERY_S:
+            collect_outputs(job, repo, out_dir)
+            last_out = time.time()
         if not stopped and time.time() - t0 >= budget:
             log(f"Time budget of {job['limits']['max_hours']} h reached: sending SIGINT to training. "
                 "The newest checkpoint is kept.")
@@ -590,15 +624,21 @@ def run_job(job: dict, workdir: Path, drive_root: Path | None) -> None:
     wb_text = (f"W&B {job['derived']['wandb_entity']}/{job['derived']['wandb_project']}"
                if job["wandb"]["mode"] != "disabled" else "no W&B")
     log(f"Run {job['derived']['run_id']} ({wb_text}); repo {repo}")
-    if not resume_done:
-        cmd = build_train_command(job, repo, resume)
-        if job["wandb"]["mode"] != "disabled":
-            shim = write_resume_shim(workdir)
-            env = {**env, "PYTHONPATH": str(shim) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")}
-            if resume is not None and job["resume"].get("wandb_config_shim"):
-                env["COLAB_TRAIN_ALLOW_CONFIG_CHANGE"] = "1"
-        train(job, repo, cmd, env, drive_run)
-    bench(job, repo, env, drive_run)
+    out_dir = outputs_dir(workdir)
+    try:
+        if not resume_done:
+            cmd = build_train_command(job, repo, resume)
+            if job["wandb"]["mode"] != "disabled":
+                shim = write_resume_shim(workdir)
+                env = {**env, "PYTHONPATH": str(shim) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")}
+                if resume is not None and job["resume"].get("wandb_config_shim"):
+                    env["COLAB_TRAIN_ALLOW_CONFIG_CHANGE"] = "1"
+            train(job, repo, cmd, env, drive_run, out_dir)
+        bench(job, repo, env, drive_run)
+    finally:  # also after a failed command: its result files are kept for the notebook's download
+        collect_outputs(job, repo, out_dir)
+        files = [f for f in out_dir.rglob("*") if f.is_file()] if out_dir.is_dir() else []
+        log(f"{len(files)} result file(s) in {out_dir}")
     log("Done. Checkpoints are kept (Drive or W&B) and the run is on W&B." if job["wandb"]["mode"] != "disabled"
         else "Done. Checkpoints are kept (Drive or local storage, see resume.source).")
 
