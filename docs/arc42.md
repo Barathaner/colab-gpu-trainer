@@ -48,8 +48,7 @@ Stakeholders: people training RL or ML models on Colab Pro, and coding agents th
 External systems: Colab (web UI), GitHub (job code, token from Colab Secrets), W&B (metrics, checkpoints, run
 config), optionally Google Drive (checkpoints, needs a human consent once per runtime).
 
-Out of scope: the training code itself, benchmark definitions, and other compute providers (RunPod pods are run by
-separate scripts).
+Out of scope: the training code itself, benchmark definitions, and other compute providers.
 
 ## 4. Solution strategy
 
