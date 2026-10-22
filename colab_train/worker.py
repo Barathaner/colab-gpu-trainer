@@ -148,7 +148,8 @@ def classify_launch(rc: int, output: str) -> tuple[str, str]:
         if HUMAN_STOP.search(reason):
             return "needs-human", reason
     if re.search(r"refused:", output):
-        return "queued-blocked", "refused by the guard (a runtime is already running)"
+        # a local count (max_parallel or a stale runtime record), not Colab's quota: retry soon, not after backoff_h
+        return "queued-session", "refused by the local guard (runtimes recorded >= max_parallel)"
     lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
     # a multi-line error message ends with its screenshot path; its first line names the error
     err = next((ln for ln in lines if re.match(r"(error|[A-Za-z]*Error)\b", ln)), None)
@@ -355,8 +356,7 @@ def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
                     cur["status"] = "queued"
                     data["blocked_until"] = (dt.datetime.fromisoformat(now) +
                                              dt.timedelta(minutes=SESSION_RETRY_MIN)).isoformat(timespec="seconds")
-                    ev = (f"{cur['job']}: QUEUED again (the account already runs a session; retry in "
-                          f"{SESSION_RETRY_MIN} min)")
+                    ev = f"{cur['job']}: QUEUED again ({reason}; retry in {SESSION_RETRY_MIN} min)"
                 elif status == "queued-blocked":
                     cur["status"] = "queued"
                     data["blocked_until"] = (dt.datetime.fromisoformat(now) +
