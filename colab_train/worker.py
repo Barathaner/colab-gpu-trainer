@@ -345,10 +345,10 @@ def run_once(cfg: dict, probe_fn: Callable[[dict], dict] | None = None,
         if res:
             events.append(res["event"])
             notify(res["item"], res["event"], cfg, now)
-            if res["item"]["status"] == "failed" and stopper is not None:
-                # a failed run's runtime would sit idle and use compute units until Colab ends it
+            if res["item"]["status"] in ("failed", "finished") and stopper is not None:
+                # an ended run's runtime would sit idle, use compute units and hold a Colab session
                 rc, out = stopper(res["item"])
-                events.append(f"{res['item']['job']}: runtime stop after failure "
+                events.append(f"{res['item']['job']}: runtime stop after {res['item']['status']} "
                               f"{'done' if rc == 0 else 'FAILED, stop it by hand'}")
     launch_next = decide_launch(q.snapshot(), cfg, now)
     if launch_next and launcher is not None:
