@@ -28,7 +28,7 @@ State as of 2026-10-21. Ordered by how much they matter to a user.
    thousands of lines per minute makes the page, and with it the browser automation, unresponsive. The runner should
    echo only progress and error lines to the cell and keep the full log in a file.
 9. **Colab Pro limits L4 sessions.** At most two L4 runtimes at once; a third session works only on a T4. The worker
-   does not know GPU types yet and retries a refused third L4 every 10 minutes.
+   honours `gpu_limits` from the config (e.g. `{L4: 2}`), but the limits are set by hand; Colab does not report them.
 
 ## Ideas
 
