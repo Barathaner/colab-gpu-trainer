@@ -29,6 +29,9 @@ State as of 2026-10-21. Ordered by how much they matter to a user.
    echo only progress and error lines to the cell and keep the full log in a file.
 9. **Colab Pro limits L4 sessions.** At most two L4 runtimes at once; a third session works only on a T4. The worker
    honours `gpu_limits` from the config (e.g. `{L4: 2}`), but the limits are set by hand; Colab does not report them.
+10. **A cancelled or killed run leaves no local results.** The notebook downloads the outputs folder when the
+   runner exits; `cancel`, the time cap of a watcher, or a dead VM delete the runtime first. Only what W&B already
+   holds survives. A stop should first interrupt the runner so the download cell still runs.
 
 ## Ideas
 
